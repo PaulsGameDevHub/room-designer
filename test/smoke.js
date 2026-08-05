@@ -125,6 +125,7 @@ const exposed = `
   deleteSelected, undo, redo, pushHistory, snapshot, applySnapshot,
   computeSchedule, wallChain, elevItems, elevInfo, setView, fitView, drawPlan, drawElevation,
   planPage, schedulePage, buildPdf, roomData, boxes, boxBB, snapBox, snapDoor, wpBB,
+  boxNearestObjects, cornerShadow, slideClearOfCorners, clipToSlab, cornerOverlapArea,
   releaseSnap, cornerGeometry, refreshSchedule, showSelected, applyRoom, setBoxRot,
   writeAutosave, restoreAutosave, exportPDF, exportPNG, saveRoom, textWidthPt,
   KU_SPECS, FURN_SPECS,
@@ -247,6 +248,84 @@ check('window kept its own defaults, not the door values', () => {
 });
 
 check('angled corner', () => { api.addCorner(); return api.corners.length === 1; });
+
+// ── Angled corners are solid ───────────────────────────────────────────────
+// A box must never be positioned inside a corner triangle. Regression test for
+// units sliding straight through an angled wall.
+check('a unit never penetrates an angled wall, anywhere along it', () => {
+  // A 600x500 splay on the left wall, like the ones in the user's own room.
+  const c = api.corners[0];
+  c.rx = 0; c.ry = 1900; c.wa = 600; c.ha = 500; c.rot = 0;
+  c.snapped = 'placed';
+
+  document.getElementById('ku-type').value = 'base';
+  document.getElementById('ku-width').value = '600';
+  api.addKitchenUnit();
+  const ku = api.kitchenUnits[api.kitchenUnits.length-1];
+
+  let worst = 0, worstAt = null, held = 0;
+  for(let y = 1000; y <= 3400; y += 25){
+    ku.cx = 300; ku.cy = y;
+    api.snapBox(ku);
+    const area = api.cornerOverlapArea(api.boxBB(ku), c);
+    if(area > worst){ worst = area; worstAt = y; }
+    if(Math.abs(ku.cy - y) > 1) held++;
+  }
+  api.selectedItem = ku;
+  api.deleteSelected();
+  return worst < 1
+    ? `97 positions swept, max penetration ${worst.toFixed(1)}mm2, held back at ${held} of them`
+    : `penetrated ${worst.toFixed(0)}mm2 at cursor y=${worstAt}`;
+});
+
+check('a unit sits flush against the splay rather than short of it', () => {
+  const c = api.corners[0];
+  document.getElementById('ku-type').value = 'base';
+  document.getElementById('ku-width').value = '600';
+  api.addKitchenUnit();
+  const ku = api.kitchenUnits[api.kitchenUnits.length-1];
+  ku.cx = 300; ku.cy = 1850;      // pushed into the splay from above
+  api.snapBox(ku);
+  const bb = api.boxBB(ku);
+  const touching = Math.abs(bb.y2 - 1900) < 1;
+  api.selectedItem = ku;
+  api.deleteSelected();
+  return touching ? 'bottom edge rests exactly on y=1900' : `bottom edge at y=${bb.y2}`;
+});
+
+check('gap dimensions measure to the splay, not through it', () => {
+  document.getElementById('ku-type').value = 'base';
+  document.getElementById('ku-width').value = '600';
+  api.addKitchenUnit();
+  const ku = api.kitchenUnits[api.kitchenUnits.length-1];
+  ku.cx = 300; ku.cy = 1400;
+  api.snapBox(ku);
+  const near = api.boxNearestObjects(ku, api.boxBB(ku));
+  api.selectedItem = ku;
+  api.deleteSelected();
+  return Math.abs(near.nearHi - 1900) < 1
+    ? `gap after reaches the splay at ${Math.round(near.nearHi)}`
+    : `gap after reaches ${Math.round(near.nearHi)}, expected 1900`;
+});
+
+check('an unsnapped free-standing item is also kept out', () => {
+  document.getElementById('furn-cat').value = 'Dining';
+  document.getElementById('furn-type').value = 'dining4';
+  api.addFurniture();
+  const f = api.furniture[api.furniture.length-1];
+  f.snapToWall = false;
+  f.cx = 200; f.cy = 2100;        // squarely inside the splay
+  api.snapBox(f);
+  const area = api.cornerOverlapArea(api.boxBB(f), api.corners[0]);
+  api.selectedItem = f;
+  api.deleteSelected();
+  return area < 1 ? 'pushed clear of the triangle' : `still overlapping by ${area.toFixed(0)}mm2`;
+});
+
+check('clipToSlab handles a triangle wholly outside the slab', () => {
+  const tri = [{x:0,y:0},{x:100,y:0},{x:0,y:100}];
+  return api.clipToSlab(tri, 'x', 500, 600).length === 0;
+});
 
 // Undo behaviour: the historic off-by-one bug.
 check('undo steps back one real change', () => {

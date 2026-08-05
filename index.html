@@ -542,42 +542,145 @@ function setBoxRot(b, rot){
 }
 
 function snapBox(b){
+  const startX = b.cx, startY = b.cy;
+
   if(!b.snapToWall){
     clampBoxToRoom(b);
     b.snapped = false;
     b.snappedFace = null;
+    slideClearOfCorners(b, ['x','y']);
     return;
   }
-  let best = BOX_SNAP_MM, bestSnap = null;
+
+  // Every wall within reach, nearest face first. With no angled corners in the
+  // way the first candidate always wins, which is the original behaviour.
   const hd = b.depth/2;
+  const candidates = [];
   for(const e of allSnapEdges(-1)){
     if(e.type === 'h'){
       // Against a horizontal wall the box runs along X.
-      const dTop = Math.abs(b.cy - hd - e.coord);
-      const dBot = Math.abs(b.cy + hd - e.coord);
-      if(dTop < best){ best = dTop; bestSnap = {coord:e.coord, face:'top',    horiz:true}; }
-      if(dBot < best){ best = dBot; bestSnap = {coord:e.coord, face:'bottom', horiz:true}; }
+      candidates.push({d:Math.abs(b.cy - hd - e.coord), coord:e.coord, face:'top',    horiz:true});
+      candidates.push({d:Math.abs(b.cy + hd - e.coord), coord:e.coord, face:'bottom', horiz:true});
     }else{
-      const dLft = Math.abs(b.cx - hd - e.coord);
-      const dRgt = Math.abs(b.cx + hd - e.coord);
-      if(dLft < best){ best = dLft; bestSnap = {coord:e.coord, face:'left',  horiz:false}; }
-      if(dRgt < best){ best = dRgt; bestSnap = {coord:e.coord, face:'right', horiz:false}; }
+      candidates.push({d:Math.abs(b.cx - hd - e.coord), coord:e.coord, face:'left',  horiz:false});
+      candidates.push({d:Math.abs(b.cx + hd - e.coord), coord:e.coord, face:'right', horiz:false});
     }
   }
-  if(bestSnap){
-    b.horiz = bestSnap.horiz;
-    b.snappedFace = bestSnap.face;
-    b.rot = FACE_TO_ROT[bestSnap.face];
-    b.anchorWallCoord = bestSnap.coord;
+  candidates.sort((p,q) => p.d - q.d);
+
+  for(const cand of candidates){
+    if(cand.d >= BOX_SNAP_MM) break;
+    b.cx = startX; b.cy = startY;
+    b.horiz = cand.horiz;
+    b.snappedFace = cand.face;
+    b.rot = FACE_TO_ROT[cand.face];
+    b.anchorWallCoord = cand.coord;
     b.snapped = true;
     anchorBox(b);
-  }else{
-    b.snapped = false;
-    b.snappedFace = null;
-    clampBoxToRoom(b);
+    // A wall-snapped box can only slide along that wall. If that leaves it
+    // buried in an angled corner, this wall is not a valid home — try the next.
+    if(slideClearOfCorners(b, [cand.horiz ? 'x' : 'y'])) return;
   }
+
+  // No wall works, so leave it free-standing where the user put it.
+  b.cx = startX; b.cy = startY;
+  b.snapped = false;
+  b.snappedFace = null;
+  clampBoxToRoom(b);
+  slideClearOfCorners(b, ['x','y']);
 }
 const ptInBox = (mx,my,b) => { const bb = boxBB(b); return mx>=bb.x1 && mx<=bb.x2 && my>=bb.y1 && my<=bb.y2; };
+
+// ── Angled corners as solid obstacles ──────────────────────────────────────
+//
+// An angled corner is a triangle, so it cannot be expressed as a snap edge.
+// Instead we work out which slice of a wall it blocks for a box of a given
+// depth, and keep boxes out of that slice.
+
+// Sutherland–Hodgman clip of a polygon to the slab lo <= p[key] <= hi.
+function clipToSlab(poly, key, lo, hi){
+  // side = +1 keeps p[key] >= edge, -1 keeps p[key] <= edge
+  const clipHalf = (pts, edge, side) => {
+    const out = [];
+    const inside = p => side > 0 ? p[key] >= edge : p[key] <= edge;
+    for(let i=0; i<pts.length; i++){
+      const a = pts[i], b = pts[(i+1) % pts.length];
+      const aIn = inside(a), bIn = inside(b);
+      if(aIn) out.push(a);
+      if(aIn !== bIn){
+        const span = b[key] - a[key];
+        const t = span === 0 ? 0 : (edge - a[key]) / span;
+        out.push({x:a.x + (b.x-a.x)*t, y:a.y + (b.y-a.y)*t});
+      }
+    }
+    return out;
+  };
+  let pts = clipHalf(poly, lo, 1);
+  if(pts.length < 3) return [];
+  pts = clipHalf(pts, hi, -1);
+  return pts.length < 3 ? [] : pts;
+}
+
+// The interval along a wall that this corner blocks, for a box occupying the
+// depth range depthLo..depthHi measured across that wall. Returns null when the
+// corner does not reach into the box's depth at all.
+function cornerShadow(c, alongAxis, depthLo, depthHi){
+  const depthKey = alongAxis === 'x' ? 'y' : 'x';
+  const poly = clipToSlab(cornerGeometry(c), depthKey, depthLo, depthHi);
+  if(!poly.length) return null;
+  const vals = poly.map(p => p[alongAxis]);
+  return {lo:Math.min(...vals), hi:Math.max(...vals)};
+}
+
+// Exact area of overlap between a corner triangle and a box footprint, in mm².
+// Sitting flush against the splay gives zero, so only real penetration counts.
+function cornerOverlapArea(bb, c){
+  let poly = clipToSlab(cornerGeometry(c), 'x', bb.x1, bb.x2);
+  if(!poly.length) return 0;
+  poly = clipToSlab(poly, 'y', bb.y1, bb.y2);
+  if(!poly.length) return 0;
+  let a = 0;
+  for(let i=0; i<poly.length; i++){
+    const p = poly[i], q = poly[(i+1) % poly.length];
+    a += p.x*q.y - q.x*p.y;
+  }
+  return Math.abs(a)/2;
+}
+function boxClearOfCorners(b){
+  const bb = boxBB(b);
+  return corners.every(c => !c.snapped || cornerOverlapArea(bb, c) < 1);
+}
+
+// Slide a box clear of every angled corner, moving only along the given axes.
+// Returns whether it ended up clear — a snapped box is restricted to its own
+// wall, so sometimes it simply cannot be.
+function slideClearOfCorners(b, axes){
+  for(let pass=0; pass<3; pass++){
+    let moved = false;
+    for(const c of corners){
+      if(!c.snapped) continue;
+      const bb = boxBB(b);
+      if(cornerOverlapArea(bb, c) < 1) continue;
+      let best = null;
+      for(const axis of axes){
+        const depthKey = axis === 'x' ? 'y' : 'x';
+        const sh = cornerShadow(c, axis, bb[depthKey+'1'], bb[depthKey+'2']);
+        if(!sh) continue;
+        const back = sh.lo - bb[axis+'2'];   // toward the low end of the wall
+        const fwd  = sh.hi - bb[axis+'1'];   // toward the high end
+        const delta = Math.abs(back) <= Math.abs(fwd) ? back : fwd;
+        if(!best || Math.abs(delta) < Math.abs(best.delta)) best = {axis, delta};
+      }
+      if(!best) continue;
+      const wasX = b.cx, wasY = b.cy;
+      if(best.axis === 'x') b.cx += best.delta; else b.cy += best.delta;
+      clampBoxToRoom(b);
+      if(b.cx !== wasX || b.cy !== wasY) moved = true;
+    }
+    if(!moved) break;
+  }
+  return boxClearOfCorners(b);
+}
 
 // Nearest obstacle edge either side of a box, measured along the wall it is
 // against. Used for the clickable position dimensions.
@@ -601,6 +704,15 @@ function boxNearestObjects(b, bb){
     const ob = openingBB(op);
     if(!ob) continue;
     obstacles.push(alongH ? {lo:ob.x1, hi:ob.x2} : {lo:ob.y1, hi:ob.y2});
+  }
+  // Angled corners block a slice of the wall, so a gap should measure to the
+  // splay rather than straight through it.
+  for(const c of corners){
+    if(!c.snapped) continue;
+    const axis = alongH ? 'x' : 'y';
+    const depthKey = alongH ? 'y' : 'x';
+    const sh = cornerShadow(c, axis, bb[depthKey+'1'], bb[depthKey+'2']);
+    if(sh) obstacles.push({lo:sh.lo, hi:sh.hi});
   }
 
   const unitLo = alongH ? bb.x1 : bb.y1;
