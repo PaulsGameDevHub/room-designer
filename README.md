@@ -10,11 +10,9 @@ or GitHub Pages.
 
 ## Running it
 
-Double-click `index.html`, or:
-
-```bash
-start D:\GamesFromAi\RoomDesigner\index.html
-```
+Double-click `index.html`. There is nothing to install and nothing to serve — it runs
+straight from `file://`. A hosted copy is at
+<https://paulsgamedevhub.github.io/room-designer/>.
 
 ## What it does
 

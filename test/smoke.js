@@ -1,8 +1,10 @@
 // Headless smoke test for RoomDesigner index.html.
 // Shims just enough DOM for the app to boot, then drives the model directly.
 const fs = require('fs');
+const nodePath = require('path');
 
-const HTML = 'D:/GamesFromAi/RoomDesigner/index.html';
+const ROOT = nodePath.join(__dirname, '..');
+const HTML = nodePath.join(ROOT, 'index.html');
 const html = fs.readFileSync(HTML, 'utf8');
 const js = /<script>([\s\S]*)<\/script>/.exec(html)[1];
 
@@ -353,9 +355,9 @@ check('PDF bytes are a valid single-document structure', () => {
 
 // The user's real saved room, straight from the backup folder.
 check("the user's own v15 room file loads", () => {
-  const path = 'D:/GamesFromAi/RoomDesigner/backup/room_8220x5050.sample.room.json';
-  if(!fs.existsSync(path)) return 'sample file not present — skipped';
-  const data = JSON.parse(fs.readFileSync(path, 'utf8'));
+  const p = nodePath.join(ROOT, 'backup', 'room_8220x5050.sample.room.json');
+  if(!fs.existsSync(p)) return 'sample file not present — skipped';
+  const data = JSON.parse(fs.readFileSync(p, 'utf8'));
   api.applySnapshot(data);
   api.drawPlan();
   const s = api.computeSchedule();
