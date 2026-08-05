@@ -1,0 +1,11 @@
+node_modules/
+*.log
+*.tmp
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Generated exports
+*-plan.pdf
+*-plan.png
+*-elevation.png

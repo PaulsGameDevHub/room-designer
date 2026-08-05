@@ -1,0 +1,2595 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+
+/* ── Force dark palette ── */
+:root{
+  --color-background-primary:#1a1a1f;
+  --color-background-secondary:#25252c;
+  --color-background-info:#1a2d3d;
+  --color-text-primary:#e8e8ec;
+  --color-text-secondary:#9999aa;
+  --color-text-tertiary:#666677;
+  --color-text-info:#5aabf0;
+  --color-border-primary:#3a3a44;
+  --color-border-secondary:#2e2e38;
+  --color-border-tertiary:#252530;
+  --color-border-info:#2a5070;
+  --font-sans:system-ui,-apple-system,sans-serif;
+  --border-radius-md:6px;
+}
+body{background:var(--color-background-primary);color:var(--color-text-primary);}
+
+#app{display:flex;flex-direction:column;height:720px;font-family:var(--font-sans);}
+#toolbar{display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:0.5px solid var(--color-border-tertiary);flex-wrap:wrap;}
+#toolbar button{font-size:12px;padding:5px 10px;cursor:pointer;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:transparent;color:var(--color-text-primary);}
+#toolbar button:hover{background:var(--color-background-secondary);}
+#toolbar button.active{background:var(--color-background-info);color:var(--color-text-info);border-color:var(--color-border-info);}
+#toolbar .sep{width:0.5px;height:22px;background:var(--color-border-tertiary);}
+#main{display:flex;flex:1;overflow:hidden;}
+#canvas-wrap{flex:1;overflow:hidden;position:relative;}
+#canvas{display:block;}
+#sidebar{width:192px;border-left:0.5px solid var(--color-border-tertiary);padding:10px;display:flex;flex-direction:column;gap:9px;background:var(--color-background-primary);overflow-y:auto;}
+#sidebar h3{font-size:11px;font-weight:500;color:var(--color-text-secondary);}
+#sidebar label{font-size:11px;color:var(--color-text-secondary);display:block;margin-bottom:2px;}
+#sidebar input[type=text]{width:100%;font-size:12px;padding:4px 7px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);}
+#sidebar button{width:100%;font-size:12px;padding:5px;cursor:pointer;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:transparent;color:var(--color-text-primary);}
+#sidebar button:hover{background:var(--color-background-secondary);}
+#sidebar button.primary{background:var(--color-background-info);color:var(--color-text-info);border-color:var(--color-border-info);}
+.panel{display:flex;flex-direction:column;gap:6px;padding:8px;border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);}
+.divider{height:0.5px;background:var(--color-border-tertiary);}
+#status{font-size:11px;color:var(--color-text-secondary);padding:5px 12px;border-top:0.5px solid var(--color-border-tertiary);background:var(--color-background-primary);}
+#dim-editor{display:none;position:absolute;z-index:100;background:var(--color-background-primary);border:0.5px solid var(--color-border-info);border-radius:var(--border-radius-md);padding:8px 10px;min-width:175px;}
+#dim-editor label{font-size:11px;color:var(--color-text-secondary);display:block;margin-bottom:2px;}
+#dim-editor .uhint{font-size:10px;color:var(--color-text-tertiary);margin-bottom:3px;}
+#dim-editor input{width:100%;font-size:12px;padding:4px 7px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);}
+#deb{display:flex;gap:5px;margin-top:5px;}
+#deb button{flex:1;font-size:11px;padding:4px;cursor:pointer;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:transparent;color:var(--color-text-primary);}
+#deb button.ok{background:var(--color-background-info);color:var(--color-text-info);border-color:var(--color-border-info);}
+</style>
+
+<h2 class="sr-only">Room designer — wall piece dims appear only once released onto a wall</h2>
+<div id="app">
+  <div id="toolbar">
+    <button id="btn-select" class="active" onclick="setMode('select')"><i class="ti ti-cursor-text" aria-hidden="true"></i> Select</button>
+    <button onclick="addWallPiece()"><i class="ti ti-rectangle" aria-hidden="true"></i> Add wall</button>
+    <button onclick="addCorner()"><i class="ti ti-triangle" aria-hidden="true"></i> Angled corner</button>
+    <button id="btn-door" onclick="addDoor()"><i class="ti ti-door" aria-hidden="true"></i> Door</button>
+    <button id="btn-window" onclick="addWindow()"><i class="ti ti-border-outer" aria-hidden="true"></i> Window</button>
+    <button id="btn-label" onclick="setMode('label')"><i class="ti ti-text-size" aria-hidden="true"></i> Label</button>
+    <button id="btn-kitchen" onclick="toggleKitchenPanel()"><i class="ti ti-building-store" aria-hidden="true"></i> Kitchen</button>
+    <div class="sep"></div>
+    <button onclick="undo()"><i class="ti ti-arrow-back-up" aria-hidden="true"></i> Undo</button>
+    <button onclick="clearAll()"><i class="ti ti-trash" aria-hidden="true"></i> Clear</button>
+    <div class="sep"></div>
+    <button onclick="zoomIn()"><i class="ti ti-zoom-in" aria-hidden="true"></i></button>
+    <button onclick="zoomOut()"><i class="ti ti-zoom-out" aria-hidden="true"></i></button>
+    <button onclick="fitView()"><i class="ti ti-maximize" aria-hidden="true"></i> Fit</button>
+    <div class="sep"></div>
+    <button onclick="exportPNG()"><i class="ti ti-photo" aria-hidden="true"></i> PNG</button>
+    <button onclick="exportPDF()"><i class="ti ti-file-type-pdf" aria-hidden="true"></i> PDF</button>
+    <div class="sep"></div>
+    <button onclick="saveRoom()"><i class="ti ti-device-floppy" aria-hidden="true"></i> Save</button>
+    <button onclick="document.getElementById('load-input').click()"><i class="ti ti-folder-open" aria-hidden="true"></i> Load</button>
+    <input id="load-input" type="file" accept=".room.json,application/json" style="display:none;" onchange="loadRoom(this)"/>
+  </div>
+  <div id="main">
+    <div id="canvas-wrap">
+      <canvas id="canvas"></canvas>
+      <div id="dim-editor">
+        <label id="dim-lbl">Value</label>
+        <div class="uhint">Enter in mm (e.g. 1200)</div>
+        <input id="dim-inp" type="text" inputmode="numeric"/>
+        <div id="deb">
+          <button onclick="cancelDim()">Cancel</button>
+          <button class="ok" onclick="confirmDim()">Apply</button>
+        </div>
+      </div>
+    </div>
+    <div id="sidebar">
+      <h3>Room setup</h3>
+      <div class="panel">
+        <div><label>Width inside (mm)</label><input id="room-w" type="text" value="8220"/></div>
+        <div><label>Depth inside (mm)</label><input id="room-h" type="text" value="5050"/></div>
+        <div><label>Ceiling height (mm)</label><input id="room-ceil" type="text" value="2400"/></div>
+        <button class="primary" onclick="applyRoom()">Apply room</button>
+      </div>
+      <div class="divider"></div>
+      <div id="wall-confirm-panel" style="display:none;">
+        <h3>Confirm drawn wall</h3>
+        <div class="panel">
+          <div><label id="wc-calc">Calculated</label><input id="wc-input" type="text"/></div>
+          <button class="primary" onclick="confirmDrawnWall()">Confirm</button>
+          <button onclick="cancelDrawnWall()">Cancel</button>
+        </div>
+      </div>
+      <div id="opening-place-panel" style="display:none;">
+        <h3 id="opening-place-title">Place door</h3>
+        <div class="panel">
+          <div><label>Width (mm)</label><input id="opening-width" type="text" value="900"/></div>
+          <div id="door-height-row"><label>Height (mm)</label><input id="door-height" type="text" value="2030"/></div>
+          <div id="door-thickness-row"><label>Thickness (mm)</label><input id="door-thickness" type="text" value="100"/></div>
+          <div id="door-swing-row"><label>Swing</label>
+            <select id="door-swing" style="width:100%;font-size:12px;padding:4px 7px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
+              <option value="left">Left</option><option value="right">Right</option>
+            </select>
+          </div>
+          <div style="font-size:10px;color:var(--color-text-secondary);line-height:1.5;">Floor to ceiling.<br>Click on any room wall to place.</div>
+        </div>
+      </div>
+      <div id="label-place-panel" style="display:none;">
+        <h3>Add label</h3>
+        <div class="panel">
+          <div><label>Text</label><input id="label-text" type="text" value="Living Room"/></div>
+          <div><label>Size</label>
+            <select id="label-size" style="width:100%;font-size:12px;padding:4px 7px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
+              <option value="small">Small (14px)</option>
+              <option value="medium" selected>Medium (20px)</option>
+              <option value="large">Large (28px)</option>
+            </select>
+          </div>
+          <div style="font-size:10px;color:var(--color-text-secondary);">Click inside room to place</div>
+        </div>
+      </div>
+      <div id="kitchen-panel" style="display:none;">
+        <h3>Kitchen units</h3>
+        <div class="panel">
+          <div><label>Type</label>
+            <select id="ku-type" style="width:100%;font-size:12px;padding:4px 7px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
+              <option value="base">Base unit (870mm tall)</option>
+              <option value="wall">Wall unit (720mm tall)</option>
+              <option value="tall">Tall unit (2100mm tall)</option>
+              <option value="island">Island (870mm tall)</option>
+            </select>
+          </div>
+          <div><label>Width (mm)</label>
+            <select id="ku-width" style="width:100%;font-size:12px;padding:4px 7px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
+              <option value="100">100mm</option>
+              <option value="150">150mm</option>
+              <option value="200">200mm</option>
+              <option value="300">300mm</option>
+              <option value="400">400mm</option>
+              <option value="500">500mm</option>
+              <option value="600" selected>600mm</option>
+              <option value="800">800mm</option>
+              <option value="1000">1000mm</option>
+              <option value="1200">1200mm</option>
+            </select>
+          </div>
+          <div id="ku-depth-row"><label>Depth: <span id="ku-depth-display">560mm carcass + 20mm door</span></label></div>
+          <button class="primary" onclick="addKitchenUnit()"><i class="ti ti-plus"></i> Add unit</button>
+          <div style="font-size:10px;color:var(--color-text-secondary);line-height:1.5;">Drag to snap to walls.<br>Wall units shown dashed (overhead).<br>Click unit to edit in sidebar.</div>
+        </div>
+      </div>
+      <div id="selected-panel" style="display:none;">
+        <div class="panel" id="selected-info"></div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <h3 style="margin-bottom:5px;">Snap</h3>
+        <label style="font-size:11px;"><input type="checkbox" id="snap-grid" checked> Grid 100mm</label>
+      </div>
+      <div class="divider"></div>
+      <div style="font-size:10px;color:var(--color-text-secondary);line-height:1.6;">
+        Room size = inside measurement.<br>Outer walls are 100mm thick.<br>Ceiling height used for doors &amp; windows.<br>Dims appear after releasing onto a wall.
+      </div>
+    </div>
+  </div>
+  <div id="status">Set inside room size and click Apply</div>
+</div>
+
+<script>
+const canvas=document.getElementById('canvas');
+const ctx=canvas.getContext('2d');
+const wrap=document.getElementById('canvas-wrap');
+
+const WALL_T=100;
+const DIM_OFFSET=52;
+
+let scale=1,offsetX=80,offsetY=80;
+let roomW=8220,roomH=5050,roomCeil=2400;
+let drawnWalls=[],wallPieces=[],corners=[],openings=[],roomLabels=[],history=[];
+let mode='select';
+let drawStart=null,mousePos={x:0,y:0};
+let pendingDrawn=null,selectedItem=null;
+let dimHitAreas=[],activeDim=null;
+let dragging=null,dragOffX=0,dragOffY=0;
+// Track which pieces are currently being dragged — dims suppressed during drag
+let isDraggingPiece=false;
+
+function fmtD(mm){mm=Math.round(mm);if(mm>=1000)return(mm/1000).toFixed(3).replace(/\.?0+$/,'')+'m';return mm+'mm';}
+function fmtE(mm){return String(Math.round(mm));}
+function parseMM(s){let v=parseFloat(String(s).trim());return isNaN(v)?NaN:Math.round(v);}
+function toC(mx,my){return{x:mx*scale+offsetX,y:my*scale+offsetY};}
+function toM(cx,cy){return{x:(cx-offsetX)/scale,y:(cy-offsetY)/scale};}
+function sg(v){return document.getElementById('snap-grid').checked?Math.round(v/100)*100:v;}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function wLen(w){return Math.hypot(w.x2-w.x1,w.y2-w.y1);}
+function wAng(w){let a=Math.atan2(w.y2-w.y1,w.x2-w.x1)*180/Math.PI;if(a<0)a+=360;return a;}
+function distPtSeg(p,w){
+  let dx=w.x2-w.x1,dy=w.y2-w.y1,l2=dx*dx+dy*dy;
+  if(l2===0)return Math.hypot(p.x-w.x1,p.y-w.y1);
+  let t=clamp(((p.x-w.x1)*dx+(p.y-w.y1)*dy)/l2,0,1);
+  return Math.hypot(p.x-(w.x1+t*dx),p.y-(w.y1+t*dy));
+}
+function isDark(){return true;}
+
+function wpBB(p){
+  let hw=p.horiz?p.len/2:p.thick/2,hh=p.horiz?p.thick/2:p.len/2;
+  return{x1:p.cx-hw,y1:p.cy-hh,x2:p.cx+hw,y2:p.cy+hh};
+}
+function clampToRoom(p){
+  let hw=p.horiz?p.len/2:p.thick/2,hh=p.horiz?p.thick/2:p.len/2;
+  p.cx=clamp(p.cx,hw,roomW-hw);p.cy=clamp(p.cy,hh,roomH-hh);
+}
+function anchorPiece(p){
+  if(!p.snapped)return;
+  // halfPerp = half the dimension perpendicular to the wall (the face that touches it)
+  // For top/bottom walls: perpendicular is Y → horiz piece uses thick/2, vert uses len/2... 
+  // Actually: top/bottom walls → face is horizontal → Y dimension of piece face touches
+  //   horiz piece: Y span = thick, so halfPerp = thick/2
+  //   vert piece:  Y span = len,   so halfPerp = len/2  (but vert piece snaps left/right normally)
+  // left/right walls → face is vertical → X dimension touches
+  //   horiz piece: X span = len,   so halfPerp = len/2
+  //   vert piece:  X span = thick, so halfPerp = thick/2
+  let halfY=p.horiz?p.thick/2:p.len/2;
+  let halfX=p.horiz?p.len/2:p.thick/2;
+  if(p.snappedFace==='top')    p.cy=p.anchorWallCoord+halfY;
+  else if(p.snappedFace==='bottom') p.cy=p.anchorWallCoord-halfY;
+  else if(p.snappedFace==='left')   p.cx=p.anchorWallCoord+halfX;
+  else if(p.snappedFace==='right')  p.cx=p.anchorWallCoord-halfX;
+  clampToRoom(p);
+}
+
+function allSnapEdges(excludeIdx){
+  let edges=[];
+  edges.push({id:'room-top',   type:'h',coord:0});
+  edges.push({id:'room-bottom',type:'h',coord:roomH});
+  edges.push({id:'room-left',  type:'v',coord:0});
+  edges.push({id:'room-right', type:'v',coord:roomW});
+  for(let i=0;i<wallPieces.length;i++){
+    if(i===excludeIdx)continue;
+    let op=wallPieces[i],bb=wpBB(op);
+    // Expose all 4 faces so any piece can snap to any face of another
+    edges.push({id:'wp-'+i+'-top',type:'h',coord:bb.y1});
+    edges.push({id:'wp-'+i+'-bot',type:'h',coord:bb.y2});
+    edges.push({id:'wp-'+i+'-lft',type:'v',coord:bb.x1});
+    edges.push({id:'wp-'+i+'-rgt',type:'v',coord:bb.x2});
+  }
+  return edges;
+}
+function firstSnap(p,excludeIdx){
+  let edges=allSnapEdges(excludeIdx),best=250,bestSnap=null;
+  for(let e of edges){
+    if(e.type==='h'){
+      let d=Math.abs((p.cy-p.len/2)-e.coord);if(d<best){best=d;bestSnap={e,face:'top',horiz:false,coord:e.coord};}
+      d=Math.abs((p.cy+p.len/2)-e.coord);if(d<best){best=d;bestSnap={e,face:'bottom',horiz:false,coord:e.coord};}
+    }else{
+      let d=Math.abs((p.cx-p.len/2)-e.coord);if(d<best){best=d;bestSnap={e,face:'left',horiz:true,coord:e.coord};}
+      d=Math.abs((p.cx+p.len/2)-e.coord);if(d<best){best=d;bestSnap={e,face:'right',horiz:true,coord:e.coord};}
+    }
+  }
+  if(bestSnap){
+    p.horiz=bestSnap.horiz;p.snappedFace=bestSnap.face;
+    p.anchorWallCoord=bestSnap.coord;p.snappedEdge=bestSnap.e.id;
+    p.snapped=true;p.orientationLocked=true;anchorPiece(p);
+  }else{p.snapped=false;p.snappedEdge=null;}
+}
+function reSnap(p,excludeIdx){
+  let edges=allSnapEdges(excludeIdx),best=250,bestSnap=null;
+  // Check all four wall types — orientation (horiz) is locked but piece can sit against any wall
+  for(let e of edges){
+    if(e.type==='h'){
+      let dTop=Math.abs(p.cy-(p.horiz?p.thick/2:p.len/2)-e.coord);
+      let dBot=Math.abs(p.cy+(p.horiz?p.thick/2:p.len/2)-e.coord);
+      if(dTop<best){best=dTop;bestSnap={e,face:'top',coord:e.coord};}
+      if(dBot<best){best=dBot;bestSnap={e,face:'bottom',coord:e.coord};}
+    }else{
+      let dLft=Math.abs(p.cx-(p.horiz?p.len/2:p.thick/2)-e.coord);
+      let dRgt=Math.abs(p.cx+(p.horiz?p.len/2:p.thick/2)-e.coord);
+      if(dLft<best){best=dLft;bestSnap={e,face:'left',coord:e.coord};}
+      if(dRgt<best){best=dRgt;bestSnap={e,face:'right',coord:e.coord};}
+    }
+  }
+  if(bestSnap){
+    p.anchorWallCoord=bestSnap.coord;p.snappedFace=bestSnap.face;
+    p.snappedEdge=bestSnap.e.id;p.snapped=true;anchorPiece(p);
+  }else{p.snapped=false;p.snappedEdge=null;}
+}
+function dragSnap(p,idx){
+  clampToRoom(p);
+  if(p.orientationLocked){
+    reSnap(p,idx);
+  }else{
+    // Only attempt firstSnap once dragged >300mm from spawn — avoids accidental lock on pickup
+    const distFromSpawn=Math.hypot(p.cx-(p.spawnX||p.cx),p.cy-(p.spawnY||p.cy));
+    if(distFromSpawn>300)firstSnap(p,idx);
+  }
+}
+function releaseSnap(p,idx){clampToRoom(p);p.orientationLocked?reSnap(p,idx):firstSnap(p,idx);}
+
+function nearestObstacle(bb,excludeP){
+  let left=0,right=roomW,top=0,bottom=roomH;
+  let leftOb=null,rightOb=null,topOb=null,bottomOb=null;
+  for(let op of wallPieces){
+    if(op===excludeP)continue;
+    let ob=wpBB(op);
+    if(ob.x2<=bb.x1&&ob.y2>bb.y1&&ob.y1<bb.y2&&ob.x2>=left){left=ob.x2;leftOb={bb:ob,x1:ob.x1};}
+    if(ob.x1>=bb.x2&&ob.y2>bb.y1&&ob.y1<bb.y2&&ob.x1<=right){right=ob.x1;rightOb={bb:ob,x2:ob.x2};}
+    if(ob.y2<=bb.y1&&ob.x2>bb.x1&&ob.x1<bb.x2&&ob.y2>=top){top=ob.y2;topOb={bb:ob,y1:ob.y1};}
+    if(ob.y1>=bb.y2&&ob.x2>bb.x1&&ob.x1<bb.x2&&ob.y1<=bottom){bottom=ob.y1;bottomOb={bb:ob,y1:ob.y1};}
+  }
+  return{left,right,top,bottom,leftOb,rightOb,topOb,bottomOb};
+}
+
+function wpFreeDims(p){
+  if(!p.orientationLocked)return null;
+  let bb=wpBB(p),dims=[];
+  let obs=nearestObstacle(bb,p);
+  let cx=bb.x1+(bb.x2-bb.x1)*0.5;
+  let cy=bb.y1+(bb.y2-bb.y1)*0.5;
+
+  let gLeft=Math.round(bb.x1-obs.left);
+  let gRight=Math.round(obs.right-bb.x2);
+  let gTop=Math.round(bb.y1-obs.top);
+  let gBot=Math.round(obs.bottom-bb.y2);
+
+  dims.push({label:fmtD(gLeft),  x1:obs.left,y1:cy,    x2:bb.x1,    y2:cy,        val:gLeft,  side:-1,tag:{type:'wp-free',piece:p,which:'left-gap'}});
+  dims.push({label:fmtD(gRight), x1:bb.x2,   y1:cy,    x2:obs.right, y2:cy,        val:gRight, side:-1,tag:{type:'wp-free',piece:p,which:'right-gap'}});
+  dims.push({label:fmtD(gTop),   x1:cx,      y1:obs.top,x2:cx,       y2:bb.y1,     val:gTop,   side:1, tag:{type:'wp-free',piece:p,which:'top-gap'}});
+  dims.push({label:fmtD(gBot),   x1:cx,      y1:bb.y2,  x2:cx,       y2:obs.bottom,val:gBot,   side:1, tag:{type:'wp-free',piece:p,which:'bottom-gap'}});
+
+  // Junction dims: when free end touches another piece, show offset from that piece's near edge
+  if(obs.bottomOb&&gBot===0){
+    let ob=obs.bottomOb.bb;
+    let jVal=Math.round(bb.x1-ob.x1);
+    dims.push({label:fmtD(jVal),x1:ob.x1,y1:bb.y2,x2:bb.x1,y2:bb.y2,val:jVal,side:1,tag:{type:'wp-junction',piece:p,axis:'x',obBB:ob}});
+  }
+  if(obs.topOb&&gTop===0){
+    let ob=obs.topOb.bb;
+    let jVal=Math.round(bb.x1-ob.x1);
+    dims.push({label:fmtD(jVal),x1:ob.x1,y1:bb.y1,x2:bb.x1,y2:bb.y1,val:jVal,side:-1,tag:{type:'wp-junction',piece:p,axis:'x',obBB:ob}});
+  }
+  if(obs.rightOb&&gRight===0){
+    let ob=obs.rightOb.bb;
+    let jVal=Math.round(bb.y1-ob.y1);
+    dims.push({label:fmtD(jVal),x1:bb.x2,y1:ob.y1,x2:bb.x2,y2:bb.y1,val:jVal,side:1,tag:{type:'wp-junction',piece:p,axis:'y',obBB:ob}});
+  }
+  if(obs.leftOb&&gLeft===0){
+    let ob=obs.leftOb.bb;
+    let jVal=Math.round(bb.y1-ob.y1);
+    dims.push({label:fmtD(jVal),x1:bb.x1,y1:ob.y1,x2:bb.x1,y2:bb.y1,val:jVal,side:-1,tag:{type:'wp-junction',piece:p,axis:'y',obBB:ob}});
+  }
+
+  // Length and thickness
+  if(!p.horiz){
+    dims.push({label:fmtD(p.len),  x1:bb.x2,y1:bb.y1,x2:bb.x2,y2:bb.y2, val:p.len,   side:1, tag:{type:'wp-free',piece:p,which:'len'}});
+    dims.push({label:fmtD(p.thick),x1:bb.x1,y1:bb.y2,x2:bb.x2,y2:bb.y2, val:p.thick, side:1, tag:{type:'wp-free',piece:p,which:'thick'}});
+  }else{
+    dims.push({label:fmtD(p.len),  x1:bb.x1,y1:bb.y1,x2:bb.x2,y2:bb.y1, val:p.len,   side:-1,tag:{type:'wp-free',piece:p,which:'len'}});
+    dims.push({label:fmtD(p.thick),x1:bb.x2,y1:bb.y1,x2:bb.x2,y2:bb.y2, val:p.thick, side:-1,tag:{type:'wp-free',piece:p,which:'thick'}});
+  }
+  return dims;
+}
+function applyWpDim(p,which,val){
+  if(which==='len'){p.len=Math.max(50,val);anchorPiece(p);clampToRoom(p);return;}
+  if(which==='thick'){p.thick=Math.max(10,val);anchorPiece(p);clampToRoom(p);return;}
+
+  if(!p.snapped){
+    let bb=wpBB(p);
+    let obs=nearestObstacle(bb,p);
+    if(which==='left-gap'){let hw=p.horiz?p.len/2:p.thick/2;p.cx=clamp(obs.left+Math.max(0,val)+hw,hw,roomW-hw);}
+    else if(which==='right-gap'){let hw=p.horiz?p.len/2:p.thick/2;p.cx=clamp(obs.right-Math.max(0,val)-hw,hw,roomW-hw);}
+    else if(which==='top-gap'){let hh=p.horiz?p.thick/2:p.len/2;p.cy=clamp(obs.top+Math.max(0,val)+hh,hh,roomH-hh);}
+    else if(which==='bottom-gap'){let hh=p.horiz?p.thick/2:p.len/2;p.cy=clamp(obs.bottom-Math.max(0,val)-hh,hh,roomH-hh);}
+    clampToRoom(p);return;
+  }
+
+  // Snapped: determine which gaps are perpendicular (resize) vs parallel (slide along wall)
+  // Perpendicular gaps are on the same axis as the snapped face:
+  //   snapped left/right → perpendicular gaps are left-gap & right-gap (X axis)
+  //   snapped top/bottom → perpendicular gaps are top-gap & bottom-gap (Y axis)
+  const face=p.snappedFace;
+  const perpX=(face==='left'||face==='right');
+  const isPerpGap=(perpX&&(which==='left-gap'||which==='right-gap'))||
+                  (!perpX&&(which==='top-gap'||which==='bottom-gap'));
+
+  let bb=wpBB(p);
+  let obs=nearestObstacle(bb,p);
+
+  if(isPerpGap){
+    // Only resize if the obstacle in that direction IS the room wall (coord matches room edge)
+    // If another wall piece is in the way, treat as position edit instead
+    const faceIsTopBot=(face==='top'||face==='bottom');
+    let obstacleIsRoomWall;
+    if(which==='bottom-gap') obstacleIsRoomWall=(obs.bottom===roomH);
+    else if(which==='top-gap') obstacleIsRoomWall=(obs.top===0);
+    else if(which==='left-gap') obstacleIsRoomWall=(obs.left===0);
+    else if(which==='right-gap') obstacleIsRoomWall=(obs.right===roomW);
+
+    if(obstacleIsRoomWall){
+      // Resize: new span = roomDim - val (free end moves, anchor stays on wall)
+      const roomDim=faceIsTopBot?roomH:roomW;
+      const newSpan=Math.max(10,roomDim-Math.max(0,val));
+      if(faceIsTopBot){if(p.horiz)p.thick=newSpan;else p.len=newSpan;}
+      else{if(p.horiz)p.len=newSpan;else p.thick=newSpan;}
+      anchorPiece(p);
+    }else{
+      // Obstacle is another piece — resize so free end is val away from obstacle face
+      // Anchor is at the room wall (coord=0 or roomDim), free end extends toward obstacle
+      let newSpan;
+      if(which==='bottom-gap') newSpan=obs.bottom-Math.max(0,val);       // face=top: len = obstacleTop - val
+      else if(which==='top-gap') newSpan=roomH-obs.top-Math.max(0,val);  // face=bottom: len = roomH - obstacleTop - val  
+      else if(which==='right-gap') newSpan=obs.right-Math.max(0,val);    // face=left: len = obstacleLeft - val
+      else if(which==='left-gap') newSpan=roomW-obs.left-Math.max(0,val);// face=right: len = roomW - obstacleRight - val
+      newSpan=Math.max(10,newSpan);
+      if(faceIsTopBot){if(p.horiz)p.thick=newSpan;else p.len=newSpan;}
+      else{if(p.horiz)p.len=newSpan;else p.thick=newSpan;}
+      anchorPiece(p);
+    }
+  }else{
+    if(which==='left-gap'){let hw=p.horiz?p.len/2:p.thick/2;p.cx=clamp(obs.left+Math.max(0,val)+hw,hw,roomW-hw);}
+    else if(which==='right-gap'){let hw=p.horiz?p.len/2:p.thick/2;p.cx=clamp(obs.right-Math.max(0,val)-hw,hw,roomW-hw);}
+    else if(which==='top-gap'){let hh=p.horiz?p.thick/2:p.len/2;p.cy=clamp(obs.top+Math.max(0,val)+hh,hh,roomH-hh);}
+    else if(which==='bottom-gap'){let hh=p.horiz?p.thick/2:p.len/2;p.cy=clamp(obs.bottom-Math.max(0,val)-hh,hh,roomH-hh);}
+  }
+  clampToRoom(p);
+}
+
+function drawDimLine(x1,y1,x2,y2,label,side,hitTag,highlight){
+  let dark=isDark(),col=highlight?'#1D9E75':(dark?'#85B7EB':'#185FA5');
+  let len=Math.hypot(x2-x1,y2-y1),off=side*26;
+  let ang=Math.atan2(y2-y1,x2-x1),perp=ang+Math.PI/2;
+  let ex1=x1+Math.cos(perp)*off,ey1=y1+Math.sin(perp)*off;
+  let ex2=x2+Math.cos(perp)*off,ey2=y2+Math.sin(perp)*off;
+  let mx=(ex1+ex2)/2,my=(ey1+ey2)/2;
+  if(len>2){
+    ctx.strokeStyle=col;ctx.lineWidth=0.8;ctx.setLineDash([3,3]);
+    ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(ex1,ey1);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x2,y2);ctx.lineTo(ex2,ey2);ctx.stroke();
+    ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(ex1,ey1);ctx.lineTo(ex2,ey2);ctx.stroke();
+    let al=7;
+    function arr(ax,ay,dir){ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(ax+Math.cos(dir+Math.PI-0.35)*al,ay+Math.sin(dir+Math.PI-0.35)*al);ctx.moveTo(ax,ay);ctx.lineTo(ax+Math.cos(dir+Math.PI+0.35)*al,ay+Math.sin(dir+Math.PI+0.35)*al);ctx.stroke();}
+    arr(ex1,ey1,ang+Math.PI);arr(ex2,ey2,ang);
+  }
+  ctx.font='11px var(--font-sans)';
+  let tw=ctx.measureText(label).width,pad=5,bw=tw+pad*2,bh=15+pad*2;
+  let lx=len>2?mx:x1+Math.cos(perp)*off,ly=len>2?my:y1+Math.sin(perp)*off;
+  ctx.fillStyle=dark?'rgba(24,24,24,0.9)':'rgba(255,255,255,0.93)';
+  ctx.beginPath();ctx.roundRect(lx-bw/2,ly-bh/2,bw,bh,4);ctx.fill();
+  ctx.strokeStyle=col;ctx.lineWidth=highlight?1.2:0.8;ctx.setLineDash([]);ctx.stroke();
+  ctx.fillStyle=col;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(label,lx,ly);
+  if(hitTag)dimHitAreas.push({bx:lx-bw/2,by:ly-bh/2,bw,bh,tag:hitTag});
+}
+
+function drawRoomDims(){
+  let dark=isDark(),col=dark?'#85B7EB':'#185FA5';
+  let wt=WALL_T*scale;
+  let r0=toC(0,0),r1=toC(roomW,roomH);
+  let ox1=r0.x-wt,oy1=r0.y-wt,ox2=r1.x+wt,oy2=r1.y+wt;
+  let al=7;
+
+  // Width — above outer wall
+  let dimY=oy1-DIM_OFFSET;
+  ctx.strokeStyle=col;ctx.lineWidth=0.8;ctx.setLineDash([3,3]);
+  ctx.beginPath();ctx.moveTo(ox1,oy1);ctx.lineTo(ox1,dimY-8);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(ox2,oy1);ctx.lineTo(ox2,dimY-8);ctx.stroke();
+  ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(ox1,dimY);ctx.lineTo(ox2,dimY);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(ox1,dimY);ctx.lineTo(ox1+al*0.6,dimY-al*0.35);ctx.moveTo(ox1,dimY);ctx.lineTo(ox1+al*0.6,dimY+al*0.35);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(ox2,dimY);ctx.lineTo(ox2-al*0.6,dimY-al*0.35);ctx.moveTo(ox2,dimY);ctx.lineTo(ox2-al*0.6,dimY+al*0.35);ctx.stroke();
+  let lbl=fmtD(roomW),tw=ctx.measureText(lbl).width+10,bh=18,mx=(ox1+ox2)/2;
+  ctx.font='11px var(--font-sans)';
+  ctx.fillStyle=dark?'rgba(24,24,24,0.9)':'rgba(255,255,255,0.93)';
+  ctx.beginPath();ctx.roundRect(mx-tw/2,dimY-bh/2,tw,bh,4);ctx.fill();
+  ctx.strokeStyle=col;ctx.lineWidth=0.8;ctx.stroke();
+  ctx.fillStyle=col;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(lbl,mx,dimY);
+
+  // Height — left of outer wall
+  let dimX=ox1-DIM_OFFSET,my2=(oy1+oy2)/2;
+  ctx.strokeStyle=col;ctx.lineWidth=0.8;ctx.setLineDash([3,3]);
+  ctx.beginPath();ctx.moveTo(ox1,oy1);ctx.lineTo(dimX-8,oy1);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(ox1,oy2);ctx.lineTo(dimX-8,oy2);ctx.stroke();
+  ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(dimX,oy1);ctx.lineTo(dimX,oy2);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(dimX,oy1);ctx.lineTo(dimX-al*0.35,oy1+al*0.6);ctx.moveTo(dimX,oy1);ctx.lineTo(dimX+al*0.35,oy1+al*0.6);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(dimX,oy2);ctx.lineTo(dimX-al*0.35,oy2-al*0.6);ctx.moveTo(dimX,oy2);ctx.lineTo(dimX+al*0.35,oy2-al*0.6);ctx.stroke();
+  let lbl2=fmtD(roomH),tw2=ctx.measureText(lbl2).width+10;
+  ctx.fillStyle=dark?'rgba(24,24,24,0.9)':'rgba(255,255,255,0.93)';
+  ctx.save();ctx.translate(dimX,my2);ctx.rotate(-Math.PI/2);
+  ctx.beginPath();ctx.roundRect(-tw2/2,-bh/2,tw2,bh,4);ctx.fill();
+  ctx.strokeStyle=col;ctx.lineWidth=0.8;ctx.stroke();
+  ctx.fillStyle=col;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(lbl2,0,0);
+  ctx.restore();
+}
+
+function drawSubDivDims(){
+  try{
+    let dark=isDark(),col=dark?'#85B7EB':'#185FA5';
+    let wt=WALL_T*scale;
+    let r0=toC(0,0),r1=toC(roomW,roomH);
+    let ox1=r0.x-wt,oy1=r0.y-wt,ox2=r1.x+wt,oy2=r1.y+wt;
+    const OFF=DIM_OFFSET*0.55;
+    ctx.font='10px var(--font-sans)';
+    ctx.textAlign='center';ctx.textBaseline='middle';
+
+    // For each of the 4 walls, collect all object positions along it
+    // then draw sub-div line only if there are any objects
+    let walls=[
+      {id:'top',   axis:'h', coord:0,     dimY:oy1-OFF, roomLen:roomW},
+      {id:'bottom',axis:'h', coord:roomH,  dimY:oy2+OFF, roomLen:roomW},
+      {id:'left',  axis:'v', coord:0,     dimX:ox1-OFF, roomLen:roomH},
+      {id:'right', axis:'v', coord:roomW,  dimX:ox2+OFF, roomLen:roomH},
+    ];
+
+    for(let wall of walls){
+      // Collect split points along this wall (in mm)
+      let splits=[];
+
+      // Corner pieces — boundary points, suppress label of segment up to this point
+      for(let c of corners){
+        if(!c.snapped)continue;
+        let geo=cornerGeometry(c);
+        let p0=geo[0],p1=geo[1],p2=geo[2];
+        let legX=Math.abs(p1.x-p0.x),legY=Math.abs(p2.y-p0.y);
+        let rot=c.rot;
+        // rot 0=TL(anchor top-left), 1=TR, 2=BR, 3=BL
+        // Only add split if anchor is actually touching that room wall
+        if(wall.id==='top'   &&p0.y<=WALL_T+1){
+          // TL(0): leg runs rightward from anchor → split at legX
+          // TR(1): leg runs leftward → split at roomW-legX
+          splits.push({mm:(rot===0||rot===3)?legX:roomW-legX, skip:true});
+        }
+        if(wall.id==='bottom'&&p0.y>=roomH-WALL_T-1){
+          splits.push({mm:(rot===3||rot===2)?roomW-legX:legX, skip:true});
+        }
+        if(wall.id==='left'  &&p0.x<=WALL_T+1){
+          splits.push({mm:(rot===0||rot===1)?legY:roomH-legY, skip:true});
+        }
+        if(wall.id==='right' &&p0.x>=roomW-WALL_T-1){
+          splits.push({mm:(rot===1||rot===2)?legY:roomH-legY, skip:true});
+        }
+      }
+
+      // Wall pieces snapped to this wall — or touching this wall with their free face
+      for(let wp of wallPieces){
+        if(!wp.snapped)continue;
+        let b=wpBB(wp);
+        if(!b)continue;
+        let isVert=(b.y2-b.y1)>(b.x2-b.x1);
+        const TOUCH=15; // mm tolerance for "touching" a wall
+
+        if(wall.axis==='h'){
+          // Primary: vertical piece snapped to this H wall — splits along X
+          if(isVert&&Math.abs(b.y1-wall.coord)<TOUCH||Math.abs(b.y2-wall.coord)<TOUCH){
+            if(b.x1>0&&b.x1<roomW)splits.push({mm:b.x1,gap:true});
+            if(b.x2>0&&b.x2<roomW)splits.push({mm:b.x2,gap:true});
+          }
+          // Adjacent: horizontal piece whose top or bottom face is flush with this wall
+          if(!isVert&&(Math.abs(b.y1-wall.coord)<TOUCH||Math.abs(b.y2-wall.coord)<TOUCH)){
+            if(b.x1>0&&b.x1<roomW)splits.push({mm:b.x1,gap:true});
+            if(b.x2>0&&b.x2<roomW)splits.push({mm:b.x2,gap:true});
+          }
+        }else{
+          // Primary: horizontal piece snapped to this V wall — splits along Y
+          if(!isVert&&(Math.abs(b.x1-wall.coord)<TOUCH||Math.abs(b.x2-wall.coord)<TOUCH)){
+            if(b.y1>0&&b.y1<roomH)splits.push({mm:b.y1,gap:true});
+            if(b.y2>0&&b.y2<roomH)splits.push({mm:b.y2,gap:true});
+          }
+          // Adjacent: vertical piece whose left or right face is flush with this wall
+          if(isVert&&(Math.abs(b.x1-wall.coord)<TOUCH||Math.abs(b.x2-wall.coord)<TOUCH)){
+            if(b.y1>0&&b.y1<roomH)splits.push({mm:b.y1,gap:true});
+            if(b.y2>0&&b.y2<roomH)splits.push({mm:b.y2,gap:true});
+          }
+        }
+      }
+
+      // Openings (doors/windows) snapped to this wall
+      for(let o of openings){
+        if(!o.snapped||o.snapType==='corner')continue;
+        let isH=o.snapAxis==='h';
+        if(wall.axis==='h'&&!isH) continue;
+        if(wall.axis==='v'&&isH) continue;
+        let wc=o.snapCoord;
+        if(wall.axis==='h'&&Math.abs(wc-wall.coord)>WALL_T+5) continue;
+        if(wall.axis==='v'&&Math.abs(wc-wall.coord)>WALL_T+5) continue;
+        splits.push({mm:o.pos-o.width/2});
+        splits.push({mm:o.pos+o.width/2});
+      }
+
+      // Always draw — even with no splits show full wall as single dim
+      let pts=[{mm:0},...splits].sort((a,b)=>a.mm-b.mm);
+      pts.push({mm:wall.roomLen});
+
+      // Draw sub-dim segments
+      for(let i=0;i<pts.length-1;i++){
+        let mmA=pts[i].mm,mmB=pts[i+1].mm,mmSpan=mmB-mmA;
+        if(mmSpan<5)continue;
+        // Skip unlabelled gap segments (wall thickness, door/window openings)
+        // A gap segment is between two gap markers (both faces of wall or opening)
+        let isGap=pts[i].gap&&pts[i+1].gap;
+        let isSkip=pts[i+1].skip;
+        if(isSkip)continue;
+        if(wall.axis==='h'){
+          let pxA=toC(mmA,0).x,pxB=toC(mmB,0).x;
+          if(isGap){
+            // Just draw tick marks with a gap, no label
+            ctx.strokeStyle=col;ctx.lineWidth=0.6;ctx.setLineDash([]);
+            ctx.beginPath();ctx.moveTo(pxA,wall.dimY-3);ctx.lineTo(pxA,wall.dimY+3);ctx.stroke();
+            ctx.beginPath();ctx.moveTo(pxB,wall.dimY-3);ctx.lineTo(pxB,wall.dimY+3);ctx.stroke();
+          }else{
+            _sdim(pxA,pxB,wall.dimY,'h',fmtD(Math.round(mmSpan)),dark,col);
+          }
+        }else{
+          let pxA=toC(0,mmA).y,pxB=toC(0,mmB).y;
+          if(isGap){
+            ctx.strokeStyle=col;ctx.lineWidth=0.6;ctx.setLineDash([]);
+            ctx.beginPath();ctx.moveTo(wall.dimX-3,pxA);ctx.lineTo(wall.dimX+3,pxA);ctx.stroke();
+            ctx.beginPath();ctx.moveTo(wall.dimX-3,pxB);ctx.lineTo(wall.dimX+3,pxB);ctx.stroke();
+          }else{
+            _sdim(pxA,pxB,wall.dimX,'v',fmtD(Math.round(mmSpan)),dark,col);
+          }
+        }
+      }
+    }
+  }catch(e){console.warn('subdiv:',e);}
+}
+
+function _sdim(pxA,pxB,coord,axis,lbl,dark,col){
+  if(Math.abs(pxB-pxA)<5)return;
+  let mid=(pxA+pxB)/2,tw=ctx.measureText(lbl).width+8,bh=15;
+  ctx.strokeStyle=col;ctx.lineWidth=0.6;ctx.setLineDash([]);
+  if(axis==='h'){
+    let gap=tw/2+2;
+    ctx.beginPath();ctx.moveTo(pxA,coord);ctx.lineTo(mid-gap,coord);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(mid+gap,coord);ctx.lineTo(pxB,coord);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(pxA,coord-3);ctx.lineTo(pxA,coord+3);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(pxB,coord-3);ctx.lineTo(pxB,coord+3);ctx.stroke();
+    ctx.fillStyle=dark?'rgba(20,20,20,0.85)':'rgba(255,255,255,0.9)';
+    ctx.beginPath();ctx.roundRect(mid-tw/2,coord-bh/2,tw,bh,3);ctx.fill();
+    ctx.strokeStyle=col;ctx.stroke();
+    ctx.fillStyle=col;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(lbl,mid,coord);
+  }else{
+    let gap=bh/2+2;
+    ctx.beginPath();ctx.moveTo(coord,pxA);ctx.lineTo(coord,mid-gap);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(coord,mid+gap);ctx.lineTo(coord,pxB);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(coord-3,pxA);ctx.lineTo(coord+3,pxA);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(coord-3,pxB);ctx.lineTo(coord+3,pxB);ctx.stroke();
+    ctx.save();
+    try{
+      ctx.translate(coord,mid);ctx.rotate(-Math.PI/2);
+      ctx.fillStyle=dark?'rgba(20,20,20,0.85)':'rgba(255,255,255,0.9)';
+      ctx.beginPath();ctx.roundRect(-tw/2,-bh/2,tw,bh,3);ctx.fill();
+      ctx.strokeStyle=col;ctx.stroke();
+      ctx.fillStyle=col;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(lbl,0,0);
+    }finally{ctx.restore();}
+  }
+}
+
+const ROOM_CORNERS=[{id:'TL',x:0,y:0,rot:0},{id:'TR',x:1,y:0,rot:1},{id:'BR',x:1,y:1,rot:2},{id:'BL',x:0,y:1,rot:3}];
+function getRCPts(){return ROOM_CORNERS.map(c=>({id:c.id,x:c.x*roomW,y:c.y*roomH,rot:c.rot}));}
+function cornerGeometry(c){
+  let{rx,ry,wa,ha,rot}=c;
+  switch(rot){
+    case 0:return[{x:rx,y:ry},{x:rx+wa,y:ry},{x:rx,y:ry+ha}];
+    case 1:return[{x:rx,y:ry},{x:rx-wa,y:ry},{x:rx,y:ry+ha}];
+    case 2:return[{x:rx,y:ry},{x:rx-wa,y:ry},{x:rx,y:ry-ha}];
+    case 3:return[{x:rx,y:ry},{x:rx+wa,y:ry},{x:rx,y:ry-ha}];
+  }
+}
+function autoSnapCorner(c){
+  // Anchor snaps to nearest wall surface within threshold, grid otherwise.
+  // Rotation is set independently via the rotate button.
+  const SNAP=300;
+
+  let hSurfaces=[0,roomH];
+  let vSurfaces=[0,roomW];
+  for(let wp of wallPieces){
+    if(!wp.snapped)continue;
+    let bb=wpBB(wp);
+    hSurfaces.push(bb.y1,bb.y2);
+    vSurfaces.push(bb.x1,bb.x2);
+  }
+  for(let w of drawnWalls){
+    hSurfaces.push(w.y1,w.y2);
+    vSurfaces.push(w.x1,w.x2);
+  }
+
+  c.rx=clamp(c.rx,0,roomW);
+  c.ry=clamp(c.ry,0,roomH);
+
+  let bestVD=SNAP,bestV=null;
+  for(let s of vSurfaces){let d=Math.abs(c.rx-s);if(d<bestVD){bestVD=d;bestV=s;}}
+  c.rx=bestV!==null?bestV:sg(c.rx);
+
+  let bestHD=SNAP,bestH=null;
+  for(let s of hSurfaces){let d=Math.abs(c.ry-s);if(d<bestHD){bestHD=d;bestH=s;}}
+  c.ry=bestH!==null?bestH:sg(c.ry);
+
+  c.snapped=(bestV!==null||bestH!==null)?'placed':null;
+}
+function nearestCornerObstacle(c){
+  // Find nearest wall piece face in each direction from the corner's anchor point
+  // rot: 0=TL(legs +X,+Y), 1=TR(legs -X,+Y), 2=BR(legs -X,-Y), 3=BL(legs +X,-Y)
+  let geo=cornerGeometry(c),p1=geo[1],p2=geo[2];
+  let rot=c.rot;
+  let nearH=null,nearV=null;
+  for(let op of wallPieces){
+    let ob=wpBB(op);
+    if(rot===0){// TL: H rightward, V downward
+      if(ob.x1>=p1.x&&ob.y1<=c.ry+10) nearH=nearH!==null?Math.min(nearH,ob.x1):ob.x1;
+      if(ob.y1>=p2.y&&ob.x1<=c.rx+10) nearV=nearV!==null?Math.min(nearV,ob.y1):ob.y1;
+    }else if(rot===1){// TR: H leftward, V downward
+      if(ob.x2<=p1.x&&ob.y1<=c.ry+10) nearH=nearH!==null?Math.max(nearH,ob.x2):ob.x2;
+      if(ob.y1>=p2.y&&ob.x2>=c.rx-10) nearV=nearV!==null?Math.min(nearV,ob.y1):ob.y1;
+    }else if(rot===2){// BR: H leftward, V upward
+      if(ob.x2<=p1.x&&ob.y2>=c.ry-10) nearH=nearH!==null?Math.max(nearH,ob.x2):ob.x2;
+      if(ob.y2<=p2.y&&ob.x2>=c.rx-10) nearV=nearV!==null?Math.max(nearV,ob.y2):ob.y2;
+    }else{// BL: H rightward, V upward
+      if(ob.x1>=p1.x&&ob.y2>=c.ry-10) nearH=nearH!==null?Math.min(nearH,ob.x1):ob.x1;
+      if(ob.y2<=p2.y&&ob.x1<=c.rx+10) nearV=nearV!==null?Math.max(nearV,ob.y2):ob.y2;
+    }
+  }
+  // Default extents: toward room boundary in the leg direction
+  let hDefault=(rot===0||rot===3)?roomW:0;
+  let vDefault=(rot===0||rot===1)?roomH:0;
+  return{hEnd:nearH!==null?nearH:hDefault, vEnd:nearV!==null?nearV:vDefault};
+}
+function gapDims(c){
+  if(!c.wa||!c.ha)return null;
+  let geo=cornerGeometry(c),p1=geo[1],p2=geo[2];
+  let rot=c.rot;
+  // Leg A end (p1) and leg B end (p2) are the surface contact points.
+  // Draw a dim along each leg from anchor to tip.
+  let ax=c.rx,ay=c.ry;
+  if(rot===0)return{
+    h:{wallY:ay,fromX:ax,toX:p1.x,val:c.wa,tag:{type:'cg',corner:c,axis:'h',snap:'TL'}},
+    v:{wallX:ax,fromY:ay,toY:p2.y,val:c.ha,tag:{type:'cg',corner:c,axis:'v',snap:'TL'}}};
+  if(rot===1)return{
+    h:{wallY:ay,fromX:p1.x,toX:ax,val:c.wa,tag:{type:'cg',corner:c,axis:'h',snap:'TR'}},
+    v:{wallX:ax,fromY:ay,toY:p2.y,val:c.ha,tag:{type:'cg',corner:c,axis:'v',snap:'TR'}}};
+  if(rot===2)return{
+    h:{wallY:ay,fromX:p1.x,toX:ax,val:c.wa,tag:{type:'cg',corner:c,axis:'h',snap:'BR'}},
+    v:{wallX:ax,fromY:p2.y,toY:ay,val:c.ha,tag:{type:'cg',corner:c,axis:'v',snap:'BR'}}};
+  return{// rot 3 BL
+    h:{wallY:ay,fromX:ax,toX:p1.x,val:c.wa,tag:{type:'cg',corner:c,axis:'h',snap:'BL'}},
+    v:{wallX:ax,fromY:p2.y,toY:ay,val:c.ha,tag:{type:'cg',corner:c,axis:'v',snap:'BL'}}};
+}
+function cornerNextSurfaces(c){
+  // For each leg direction, find the nearest surface BEYOND the leg tip.
+  // Returns {hSurf, vSurf} — the surface coordinate in each axis.
+  let geo=cornerGeometry(c),p1=geo[1],p2=geo[2];
+  let rot=c.rot;
+
+  let hSurfaces=[0,roomH];
+  let vSurfaces=[0,roomW];
+  for(let wp of wallPieces){
+    if(!wp.snapped)continue;
+    let bb=wpBB(wp);
+    hSurfaces.push(bb.y1,bb.y2);
+    vSurfaces.push(bb.x1,bb.x2);
+  }
+  for(let w of drawnWalls){
+    hSurfaces.push(w.y1,w.y2);
+    vSurfaces.push(w.x1,w.x2);
+  }
+
+  // Leg A tip is p1 — find nearest vSurface beyond it in the leg A direction
+  // rot 0,3: leg A goes right (+X) → nearest vSurface >= p1.x
+  // rot 1,2: leg A goes left  (-X) → nearest vSurface <= p1.x
+  let hSurf,vSurf;
+  if(rot===0||rot===3){
+    let best=Infinity;
+    for(let s of vSurfaces)if(s>=p1.x&&s<best)best=s;
+    vSurf=best===Infinity?roomW:best;
+  }else{
+    let best=-Infinity;
+    for(let s of vSurfaces)if(s<=p1.x&&s>best)best=s;
+    vSurf=best===-Infinity?0:best;
+  }
+
+  // Leg B tip is p2 — find nearest hSurface beyond it in the leg B direction
+  // rot 0,1: leg B goes down (+Y) → nearest hSurface >= p2.y
+  // rot 2,3: leg B goes up   (-Y) → nearest hSurface <= p2.y
+  if(rot===0||rot===1){
+    let best=Infinity;
+    for(let s of hSurfaces)if(s>=p2.y&&s<best)best=s;
+    hSurf=best===Infinity?roomH:best;
+  }else{
+    let best=-Infinity;
+    for(let s of hSurfaces)if(s<=p2.y&&s>best)best=s;
+    hSurf=best===-Infinity?0:best;
+  }
+
+  return{vSurf,hSurf};
+}
+
+function gapDims(c){
+  if(!c.wa||!c.ha)return null;
+  let geo=cornerGeometry(c),p1=geo[1],p2=geo[2];
+  let rot=c.rot,ax=c.rx,ay=c.ry;
+  let{vSurf,hSurf}=cornerNextSurfaces(c);
+
+  // Horizontal gap dim: from leg A tip (p1) to the next vertical surface
+  // Vertical gap dim: from leg B tip (p2) to the next horizontal surface
+  let hGap,vGap;
+  if(rot===0||rot===3){ hGap=vSurf-p1.x; }else{ hGap=p1.x-vSurf; }
+  if(rot===0||rot===1){ vGap=hSurf-p2.y; }else{ vGap=p2.y-hSurf; }
+
+  hGap=Math.max(0,Math.round(hGap));
+  vGap=Math.max(0,Math.round(vGap));
+
+  if(rot===0)return{
+    h:{wallY:ay,fromX:p1.x,toX:vSurf,val:hGap,tag:{type:'cg',corner:c,axis:'h'}},
+    v:{wallX:ax,fromY:p2.y,toY:hSurf,val:vGap,tag:{type:'cg',corner:c,axis:'v'}}};
+  if(rot===1)return{
+    h:{wallY:ay,fromX:vSurf,toX:p1.x,val:hGap,tag:{type:'cg',corner:c,axis:'h'}},
+    v:{wallX:ax,fromY:p2.y,toY:hSurf,val:vGap,tag:{type:'cg',corner:c,axis:'v'}}};
+  if(rot===2)return{
+    h:{wallY:ay,fromX:vSurf,toX:p1.x,val:hGap,tag:{type:'cg',corner:c,axis:'h'}},
+    v:{wallX:ax,fromY:hSurf,toY:p2.y,val:vGap,tag:{type:'cg',corner:c,axis:'v'}}};
+  return{// rot 3
+    h:{wallY:ay,fromX:p1.x,toX:vSurf,val:hGap,tag:{type:'cg',corner:c,axis:'h'}},
+    v:{wallX:ax,fromY:hSurf,toY:p2.y,val:vGap,tag:{type:'cg',corner:c,axis:'v'}}};
+}
+function drawCornerGaps(c,isSel){
+  let gaps=gapDims(c);if(!gaps)return;
+  let{h,v}=gaps;
+  drawDimLine(toC(h.fromX,h.wallY).x,toC(h.fromX,h.wallY).y,toC(h.toX,h.wallY).x,toC(h.toX,h.wallY).y,fmtD(h.val),-1,h.tag,isSel);
+  drawDimLine(toC(v.wallX,v.fromY).x,toC(v.wallX,v.fromY).y,toC(v.wallX,v.toY).x,toC(v.wallX,v.toY).y,fmtD(v.val),1,v.tag,isSel);
+}
+function applyCornerGap(c,axis,val){
+  // Anchor is fixed. Adjust wa or ha so the leg tip lands (val)mm from the next surface.
+  val=Math.max(0,val);
+  let{vSurf,hSurf}=cornerNextSurfaces(c);
+  let rot=c.rot;
+  if(axis==='h'){
+    // wa = distance from anchor to leg A tip; tip to vSurf = val
+    // rot 0,3: tip = rx+wa → wa = vSurf - val - rx
+    // rot 1,2: tip = rx-wa → wa = rx - vSurf - val
+    if(rot===0||rot===3) c.wa=Math.max(50,vSurf-val-c.rx);
+    else                 c.wa=Math.max(50,c.rx-vSurf-val);
+  }else{
+    // ha = distance from anchor to leg B tip
+    // rot 0,1: tip = ry+ha → ha = hSurf - val - ry
+    // rot 2,3: tip = ry-ha → ha = ry - hSurf - val
+    if(rot===0||rot===1) c.ha=Math.max(50,hSurf-val-c.ry);
+    else                 c.ha=Math.max(50,c.ry-hSurf-val);
+  }
+}
+
+function hitTest(cx,cy){for(let h of dimHitAreas){if(cx>=h.bx&&cx<=h.bx+h.bw&&cy>=h.by&&cy<=h.by+h.bh)return h;}return null;}
+function ptInRect(mx,my,p){let bb=wpBB(p);return mx>=bb.x1&&mx<=bb.x2&&my>=bb.y1&&my<=bb.y2;}
+function ptInTri(mx,my,c){
+  let g=cornerGeometry(c),[p0,p1,p2]=g;
+  function sign(px,py,ax,ay,bx,by){return(px-bx)*(ay-by)-(ax-bx)*(py-by);}
+  let d1=sign(mx,my,p0.x,p0.y,p1.x,p1.y),d2=sign(mx,my,p1.x,p1.y,p2.x,p2.y),d3=sign(mx,my,p2.x,p2.y,p0.x,p0.y);
+  return!((d1<0||d2<0||d3<0)&&(d1>0||d2>0||d3>0));
+}
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  dimHitAreas=[];
+  let dark=isDark();
+  let gridC=dark?'rgba(255,255,255,0.05)':'rgba(0,0,0,0.05)';
+  let gridM=dark?'rgba(255,255,255,0.10)':'rgba(0,0,0,0.10)';
+  let r0=toC(0,0),r1=toC(roomW,roomH);
+  let wt=WALL_T*scale;
+
+  // Outer wall fill
+  ctx.fillStyle=dark?'rgba(180,180,180,0.18)':'rgba(80,80,80,0.15)';
+  ctx.fillRect(r0.x-wt,r0.y-wt,wt,r1.y-r0.y+wt*2);
+  ctx.fillRect(r1.x,r0.y-wt,wt,r1.y-r0.y+wt*2);
+  ctx.fillRect(r0.x-wt,r0.y-wt,r1.x-r0.x+wt*2,wt);
+  ctx.fillRect(r0.x-wt,r1.y,r1.x-r0.x+wt*2,wt);
+  ctx.strokeStyle=dark?'rgba(200,200,200,0.35)':'rgba(60,60,60,0.35)';
+  ctx.lineWidth=1;ctx.setLineDash([]);
+  ctx.strokeRect(r0.x-wt,r0.y-wt,r1.x-r0.x+wt*2,r1.y-r0.y+wt*2);
+
+  // Interior
+  ctx.fillStyle=dark?'rgba(255,255,255,0.03)':'rgba(255,255,255,0.95)';
+  ctx.fillRect(r0.x,r0.y,r1.x-r0.x,r1.y-r0.y);
+  ctx.strokeStyle=dark?'#378ADD':'#185FA5';ctx.lineWidth=2.5;ctx.setLineDash([]);
+  ctx.strokeRect(r0.x,r0.y,r1.x-r0.x,r1.y-r0.y);
+
+  // Grid clipped to interior
+  ctx.save();ctx.beginPath();ctx.rect(r0.x,r0.y,r1.x-r0.x,r1.y-r0.y);ctx.clip();
+  for(let x=0;x<=roomW;x+=100){let maj=x%1000===0;ctx.strokeStyle=maj?gridM:gridC;ctx.lineWidth=maj?0.8:0.5;let a=toC(x,0),b=toC(x,roomH);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
+  for(let y=0;y<=roomH;y+=100){let maj=y%1000===0;ctx.strokeStyle=maj?gridM:gridC;ctx.lineWidth=maj?0.8:0.5;let a=toC(0,y),b=toC(roomW,y);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
+  ctx.restore();
+
+  drawRoomDims();
+  drawSubDivDims();
+
+  // Wall pieces
+  for(let i=0;i<wallPieces.length;i++){
+    let p=wallPieces[i],isSel=selectedItem===p,isDrag=dragging===p;
+    let bb=wpBB(p),c1=toC(bb.x1,bb.y1),c2=toC(bb.x2,bb.y2);
+    ctx.beginPath();ctx.rect(c1.x,c1.y,c2.x-c1.x,c2.y-c1.y);
+    if(isDrag){
+      // During drag: orange if not near wall, green if near wall — but NO dims
+      ctx.fillStyle=p.snapped?(dark?'rgba(29,158,117,0.20)':'rgba(29,158,117,0.13)'):(dark?'rgba(211,90,48,0.18)':'rgba(211,90,48,0.12)');
+      ctx.strokeStyle=p.snapped?'#1D9E75':'#D85A30';
+    }else if(isSel){
+      ctx.fillStyle=dark?'rgba(15,110,86,0.22)':'rgba(15,110,86,0.12)';ctx.strokeStyle='#1D9E75';
+    }else{
+      ctx.fillStyle=dark?'rgba(24,95,165,0.30)':'rgba(24,95,165,0.18)';ctx.strokeStyle=dark?'#378ADD':'#185FA5';
+    }
+    ctx.lineWidth=isSel?2.5:1.5;ctx.setLineDash([]);ctx.fill();ctx.stroke();
+
+    // Snapped face indicator — shown when snapped; dims shown when selected and not dragging
+    if(p.snapped){
+      let bb2=wpBB(p);
+      ctx.strokeStyle='#1D9E75';ctx.lineWidth=1.5;ctx.setLineDash([4,3]);
+      if(!p.horiz){
+        let hy=p.snappedFace==='top'?bb2.y1:bb2.y2;
+        let ch1=toC(bb2.x1,hy),ch2=toC(bb2.x2,hy);
+        ctx.beginPath();ctx.moveTo(ch1.x,ch1.y);ctx.lineTo(ch2.x,ch2.y);ctx.stroke();
+      }else{
+        let hx=p.snappedFace==='left'?bb2.x1:bb2.x2;
+        let ch1=toC(hx,bb2.y1),ch2=toC(hx,bb2.y2);
+        ctx.beginPath();ctx.moveTo(ch1.x,ch1.y);ctx.lineTo(ch2.x,ch2.y);ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+
+    // Dims: show whenever orientation locked, selected, and not being dragged
+    if(p.orientationLocked&&isSel&&!isDrag){
+      let dims=wpFreeDims(p);
+      if(dims)for(let d of dims){
+        let a=toC(d.x1,d.y1),b=toC(d.x2,d.y2);
+        drawDimLine(a.x,a.y,b.x,b.y,d.label,d.side,d.tag,isSel);
+      }
+    }
+  }
+
+  // Corner pieces
+  for(let c of corners){
+    let geo=cornerGeometry(c),cp=geo.map(p=>toC(p.x,p.y)),isSel=selectedItem===c,isDrag=dragging===c;
+    ctx.beginPath();ctx.moveTo(cp[0].x,cp[0].y);ctx.lineTo(cp[1].x,cp[1].y);ctx.lineTo(cp[2].x,cp[2].y);ctx.closePath();
+    if(isDrag&&!c.snapped)ctx.fillStyle=dark?'rgba(211,90,48,0.18)':'rgba(211,90,48,0.12)';
+    else if(isDrag&&c.snapped)ctx.fillStyle=dark?'rgba(29,158,117,0.22)':'rgba(29,158,117,0.14)';
+    else if(isSel)ctx.fillStyle=dark?'rgba(29,158,117,0.18)':'rgba(29,158,117,0.10)';
+    else ctx.fillStyle=dark?'rgba(83,74,183,0.25)':'rgba(83,74,183,0.14)';
+    ctx.lineWidth=1.5;ctx.setLineDash([]);ctx.fill();
+    ctx.strokeStyle=isSel||isDrag?'#1D9E75':'#534AB7';ctx.lineWidth=isSel?3:2;
+    ctx.beginPath();ctx.moveTo(cp[1].x,cp[1].y);ctx.lineTo(cp[2].x,cp[2].y);ctx.stroke();
+    ctx.strokeStyle=isSel||isDrag?'rgba(29,158,117,0.4)':'rgba(83,74,183,0.35)';
+    ctx.lineWidth=1;ctx.setLineDash([4,3]);
+    ctx.beginPath();ctx.moveTo(cp[0].x,cp[0].y);ctx.lineTo(cp[1].x,cp[1].y);ctx.moveTo(cp[0].x,cp[0].y);ctx.lineTo(cp[2].x,cp[2].y);ctx.stroke();
+    ctx.setLineDash([]);
+    // Non-interactive diagonal length label on hypotenuse — only when selected
+    if(isSel&&!isDrag){
+      let diag=Math.hypot(c.wa,c.ha);
+      let lbl=fmtD(Math.round(diag));
+      let mx=(cp[1].x+cp[2].x)/2,my=(cp[1].y+cp[2].y)/2;
+      let ang=Math.atan2(cp[2].y-cp[1].y,cp[2].x-cp[1].x);
+      ctx.save();ctx.translate(mx,my);ctx.rotate(ang);
+      ctx.font='10px var(--font-sans)';
+      let tw=ctx.measureText(lbl).width,pad=4,bw=tw+pad*2,bh=14+pad*2;
+      ctx.fillStyle=dark?'rgba(24,24,24,0.85)':'rgba(255,255,255,0.85)';
+      ctx.beginPath();ctx.roundRect(-bw/2,-bh/2,bw,bh,3);ctx.fill();
+      ctx.fillStyle=dark?'#9999aa':'#555566';
+      ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(lbl,0,0);
+      ctx.restore();
+    }
+    // Corner dims: show whenever selected and not dragging
+    if(isSel&&!isDrag)drawCornerGaps(c,isSel);
+  }
+
+  // Drawn walls
+  for(let w of drawnWalls){
+    let p1c=toC(w.x1,w.y1),p2c=toC(w.x2,w.y2),isSel=selectedItem===w,isDragW=dragging===w;
+    ctx.strokeStyle=isSel?'#1D9E75':(dark?'#B5D4F4':'#185FA5');ctx.lineWidth=isSel?4:3;ctx.setLineDash([]);
+    ctx.beginPath();ctx.moveTo(p1c.x,p1c.y);ctx.lineTo(p2c.x,p2c.y);ctx.stroke();
+    ctx.fillStyle=isSel?'#1D9E75':(dark?'#85B7EB':'#185FA5');
+    ctx.beginPath();ctx.arc(p1c.x,p1c.y,5,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(p2c.x,p2c.y,5,0,Math.PI*2);ctx.fill();
+    if(isSel&&!isDragW)drawDrawnWallDims(w,isSel);
+  }
+
+  drawOpenings();
+  drawKitchenUnits();
+  drawRoomLabels();
+
+  // Draw wall preview
+  if(mode==='wall'&&drawStart){
+    let sp=toC(drawStart.x,drawStart.y),ep=toC(mousePos.x,mousePos.y);
+    ctx.strokeStyle='rgba(211,90,48,0.75)';ctx.lineWidth=2;ctx.setLineDash([6,4]);
+    ctx.beginPath();ctx.moveTo(sp.x,sp.y);ctx.lineTo(ep.x,ep.y);ctx.stroke();
+    ctx.setLineDash([]);ctx.fillStyle='#D85A30';
+    ctx.beginPath();ctx.arc(sp.x,sp.y,5,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(ep.x,ep.y,5,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#D85A30';ctx.font='11px var(--font-sans)';ctx.textAlign='center';ctx.textBaseline='bottom';
+    ctx.fillText(fmtD(Math.hypot(mousePos.x-drawStart.x,mousePos.y-drawStart.y)),(toC(drawStart.x,drawStart.y).x+toC(mousePos.x,mousePos.y).x)/2,(toC(drawStart.x,drawStart.y).y+toC(mousePos.x,mousePos.y).y)/2-4);
+  }
+  if(mode==='wall'&&!drawStart){
+    let p=toC(mousePos.x,mousePos.y);ctx.strokeStyle='rgba(211,90,48,0.4)';ctx.lineWidth=1;ctx.setLineDash([]);ctx.beginPath();ctx.arc(p.x,p.y,7,0,Math.PI*2);ctx.stroke();
+  }
+}
+
+function drawDrawnWallDims(w,isSel){
+  let p1c=toC(w.x1,w.y1),p2c=toC(w.x2,w.y2);
+  let deg=Math.round(wAng(w)),angStr=(deg===0||deg===180||deg===360)?'':` ${deg}°`;
+  drawDimLine(p1c.x,p1c.y,p2c.x,p2c.y,fmtD(wLen(w))+angStr,1,{type:'dw-len',wall:w},isSel);
+  for(let key of['p1','p2']){
+    let px=key==='p1'?w.x1:w.x2,py=key==='p1'?w.y1:w.y2,dl=px,dr=roomW-px,dt=py,db=roomH-py;
+    if(dl>50){let a=toC(0,py),b=toC(px,py);drawDimLine(a.x,a.y,b.x,b.y,fmtD(dl),-1,{type:'dw-ep-x',wall:w,ep:key,side:'left'},isSel);}
+    if(dr>50){let a=toC(px,py),b=toC(roomW,py);drawDimLine(a.x,a.y,b.x,b.y,fmtD(dr),-1,{type:'dw-ep-x',wall:w,ep:key,side:'right'},isSel);}
+    if(dt>50){let a=toC(px,0),b=toC(px,py);drawDimLine(a.x,a.y,b.x,b.y,fmtD(dt),1,{type:'dw-ep-y',wall:w,ep:key,side:'top'},isSel);}
+    if(db>50){let a=toC(px,py),b=toC(px,roomH);drawDimLine(a.x,a.y,b.x,b.y,fmtD(db),1,{type:'dw-ep-y',wall:w,ep:key,side:'bottom'},isSel);}
+  }
+}
+
+canvas.addEventListener('mousedown',e=>{
+  if(activeDim)return;
+  let rect=canvas.getBoundingClientRect(),cx=e.clientX-rect.left,cy=e.clientY-rect.top;
+  if(hitTest(cx,cy))return;
+  if(mode==='select'){
+    let mp=toM(cx,cy);
+    for(let p of wallPieces){
+      if(ptInRect(mp.x,mp.y,p)){
+        if(p.locked){selectedItem=p;showSelected();return;}
+        dragging=p;dragOffX=mp.x-p.cx;dragOffY=mp.y-p.cy;
+        // Don't clear snapped here — dragSnap will update it as the piece moves
+        selectedItem=p;showSelected();return;
+      }
+    }
+    for(let c of corners){
+      if(ptInTri(mp.x,mp.y,c)){
+        if(c.locked){selectedItem=c;showSelected();return;}
+        dragging=c;dragOffX=mp.x-c.rx;dragOffY=mp.y-c.ry;selectedItem=c;showSelected();return;
+      }
+    }
+    for(let o of openings){
+      if(ptInOpening(mp.x,mp.y,o)){
+        if(o.locked){selectedItem=o;showSelected();return;}
+        dragging=o;
+        // Always unsnap on pickup so it floats freely until released
+        if(o.snapType==='corner'){
+          // Keep snapType and snapCorner so hit test still works after release
+          o.snapped=false;
+        }else if(o.snapped){
+          let bb=openingBB(o);
+          o.cx=(bb.x1+bb.x2)/2;o.cy=(bb.y1+bb.y2)/2;
+          o.snapped=false;o.wall=null;
+        }
+        dragOffX=mp.x-o.cx;dragOffY=mp.y-o.cy;
+        selectedItem=o;showSelected();return;
+      }
+    }
+    for(let l of roomLabels){
+      if(ptInLabel(mp.x,mp.y,l)){
+        if(l.locked){selectedItem=l;showSelected();return;}
+        dragging=l;dragOffX=mp.x-l.x;dragOffY=mp.y-l.y;selectedItem=l;showSelected();return;
+      }
+    }
+    for(let ku of kitchenUnits){
+      if(ptInKU(mp.x,mp.y,ku)){
+        if(ku.locked){selectedItem=ku;showSelected();return;}
+        dragging=ku;dragOffX=mp.x-ku.cx;dragOffY=mp.y-ku.cy;selectedItem=ku;showSelected();return;
+      }
+    }
+    let thr=10/scale;
+    for(let w of drawnWalls){
+      if(distPtSeg(mp,w)<thr){dragging=w;dragOffX=mp.x-w.x1;dragOffY=mp.y-w.y1;selectedItem=w;showSelected();return;}
+    }
+  }
+});
+canvas.addEventListener('mousemove',e=>{
+  let rect=canvas.getBoundingClientRect(),cx=e.clientX-rect.left,cy=e.clientY-rect.top;
+  let raw=toM(cx,cy);
+  mousePos={x:clamp(raw.x,0,roomW),y:clamp(raw.y,0,roomH)};
+  if(dragging){
+    if(wallPieces.includes(dragging)){
+      dragging.cx=sg(raw.x-dragOffX);dragging.cy=sg(raw.y-dragOffY);
+      dragSnap(dragging,wallPieces.indexOf(dragging));
+      document.getElementById('status').textContent=dragging.snapped?'Release to place here':'Drag near a wall to snap';
+    }else if(corners.includes(dragging)){
+      dragging.rx=raw.x-dragOffX;dragging.ry=raw.y-dragOffY;
+      autoSnapCorner(dragging);
+      document.getElementById('status').textContent='Drag to position — use Rotate in sidebar to change orientation';
+    }else if(openings.includes(dragging)){
+      let o=dragging;
+      o.cx=clamp(raw.x-dragOffX,0,roomW);
+      o.cy=clamp(raw.y-dragOffY,0,roomH);
+      // If already snapped to corner, slide along hypotenuse
+      if(o.snapType==='corner'&&o.snapCorner){
+        let p1=o.snapP1,p2=o.snapP2,len=o.snapHypLen;
+        let dx=p2.x-p1.x,dy=p2.y-p1.y;
+        let t=((o.cx-p1.x)*dx+(o.cy-p1.y)*dy)/(len*len);
+        let hw=o.width/2/len;
+        t=clamp(t,hw,1-hw);
+        o.snapT=t;
+        o.cx=p1.x+t*(p2.x-p1.x);
+        o.cy=p1.y+t*(p2.y-p1.y);
+      }else{
+        snapDoor(o);
+      }
+      document.getElementById('status').textContent=o.snapped?'Release to place — drag to reposition':'Drag to a wall to snap';
+    }else if(roomLabels.includes(dragging)){
+      dragging.x=raw.x-dragOffX;dragging.y=raw.y-dragOffY;
+    }else if(kitchenUnits.includes(dragging)){
+      dragging.cx=sg(raw.x-dragOffX);dragging.cy=sg(raw.y-dragOffY);
+      snapKU(dragging,kitchenUnits.indexOf(dragging));
+      document.getElementById('status').textContent=dragging.snapped?'Release to place here':'Drag near a wall to snap';
+    }else if(drawnWalls.includes(dragging)){
+      let dx=raw.x-dragOffX-dragging.x1,dy=raw.y-dragOffY-dragging.y1;
+      dragging.x1+=dx;dragging.y1+=dy;dragging.x2+=dx;dragging.y2+=dy;
+      // Clamp both endpoints inside room
+      let minX=Math.min(dragging.x1,dragging.x2),maxX=Math.max(dragging.x1,dragging.x2);
+      let minY=Math.min(dragging.y1,dragging.y2),maxY=Math.max(dragging.y1,dragging.y2);
+      if(minX<0){dragging.x1-=minX;dragging.x2-=minX;}
+      if(maxX>roomW){dragging.x1-=maxX-roomW;dragging.x2-=maxX-roomW;}
+      if(minY<0){dragging.y1-=minY;dragging.y2-=minY;}
+      if(maxY>roomH){dragging.y1-=maxY-roomH;dragging.y2-=maxY-roomH;}
+      dragOffX=raw.x-dragging.x1;dragOffY=raw.y-dragging.y1;
+    }
+    draw();return;
+  }
+  let hit=hitTest(cx,cy);
+  canvas.style.cursor=hit?'pointer':(mode==='wall'||mode==='door'||mode==='window'||mode==='label'?'crosshair':'default');
+  document.getElementById('status').textContent=`${Math.round(mousePos.x)}mm, ${Math.round(mousePos.y)}mm`+(mode==='wall'&&drawStart?` — ${fmtD(Math.hypot(mousePos.x-drawStart.x,mousePos.y-drawStart.y))}`:'');
+  draw();
+});
+canvas.addEventListener('mouseup',e=>{
+  if(dragging){
+    if(wallPieces.includes(dragging)){
+      releaseSnap(dragging,wallPieces.indexOf(dragging));
+    }else if(kitchenUnits.includes(dragging)){
+      releaseSnapKU(dragging,kitchenUnits.indexOf(dragging));
+    }else if(openings.includes(dragging)){
+      if(dragging.snapType==='corner'&&dragging.snapP1){
+        // Update cx/cy from precise hyp position
+        dragging.cx=dragging.snapP1.x+dragging.snapT*(dragging.snapP2.x-dragging.snapP1.x);
+        dragging.cy=dragging.snapP1.y+dragging.snapT*(dragging.snapP2.y-dragging.snapP1.y);
+        dragging.snapped=true;
+      }else if(!dragging.snapped&&dragging.cx!==undefined){
+        snapDoor(dragging);
+      }
+    }else{
+      autoSnapCorner(dragging);
+    }
+    saveHistory();dragging=null;showSelected();draw();
+  }
+});
+canvas.addEventListener('click',e=>{
+  if(dragging)return;
+  if(activeDim){closeDim();return;}
+  let rect=canvas.getBoundingClientRect(),cx=e.clientX-rect.left,cy=e.clientY-rect.top;
+  let hit=hitTest(cx,cy);
+  if(hit&&hit.tag){openDim(hit.tag,cx,cy);return;}
+  let raw=toM(cx,cy),pt={x:clamp(raw.x,0,roomW),y:clamp(raw.y,0,roomH)};
+  if(mode==='wall'){
+    if(!drawStart){drawStart=pt;document.getElementById('status').textContent='Click end point';}
+    else{
+      let len=Math.hypot(pt.x-drawStart.x,pt.y-drawStart.y);if(len<5)return;
+      pendingDrawn={x1:drawStart.x,y1:drawStart.y,x2:pt.x,y2:pt.y};
+      let inp=document.getElementById('wc-input');inp.value=fmtE(len);
+      document.getElementById('wc-calc').textContent='Calculated: '+fmtD(len);
+      document.getElementById('wall-confirm-panel').style.display='block';inp.focus();inp.select();drawStart=null;draw();
+    }
+    return;
+  }
+  if(mode==='label'){
+    let text=document.getElementById('label-text').value||'Label';
+    let size=document.getElementById('label-size').value;
+    let lbl={type:'label',x:pt.x,y:pt.y,text,size};
+    saveHistory();roomLabels.push(lbl);selectedItem=lbl;setMode('select');showSelected();draw();
+    return;
+  }
+  if(mode==='select'){
+    let found=null;
+    for(let o of openings){if(ptInOpening(raw.x,raw.y,o)){found=o;break;}}
+    if(!found)for(let p of wallPieces){if(ptInRect(raw.x,raw.y,p)){found=p;break;}}
+    if(!found)for(let c of corners){if(ptInTri(raw.x,raw.y,c)){found=c;break;}}
+    if(!found){let thr=10/scale;for(let w of drawnWalls){if(distPtSeg(pt,w)<thr){found=w;break;}}}
+    if(!found)for(let l of roomLabels){if(ptInLabel(raw.x,raw.y,l)){found=l;break;}}
+    if(!found)for(let ku of kitchenUnits){if(ptInKU(raw.x,raw.y,ku)){found=ku;break;}}
+    selectedItem=found;showSelected();draw();
+  }
+});
+
+function openDim(tag,cx,cy){
+  activeDim=tag;
+  let el=document.getElementById('dim-editor'),lbl=document.getElementById('dim-lbl'),inp=document.getElementById('dim-inp');
+  if(tag.type==='wp-free'){
+    let p=tag.piece,bb=wpBB(p);
+    let obs=nearestObstacle(bb,p);
+    let labels={len:'Wall length',thick:'Wall thickness','left-gap':'Gap to left','right-gap':'Gap to right','top-gap':'Gap to top','bottom-gap':'Gap to bottom'};
+    lbl.textContent=labels[tag.which]||tag.which;
+    let gLeft=Math.round(bb.x1-obs.left),gRight=Math.round(obs.right-bb.x2),gTop=Math.round(bb.y1-obs.top),gBot=Math.round(obs.bottom-bb.y2);
+    let vals={len:p.len,thick:p.thick,'left-gap':gLeft,'right-gap':gRight,'top-gap':gTop,'bottom-gap':gBot};
+    inp.value=fmtE(vals[tag.which]??0);
+  }else if(tag.type==='wp-junction'){
+    lbl.textContent='Offset from wall edge';
+    let p=tag.piece,bb=wpBB(p),ob=tag.obBB;
+    let jVal=tag.axis==='x'?Math.round(bb.x1-ob.x1):Math.round(bb.y1-ob.y1);
+    inp.value=fmtE(jVal);
+  }else if(tag.type==='corner-door-dim'){
+    let o=tag.opening,hypLen=o.snapHypLen;
+    let labels={width:'Door width','left-gap':'Gap from wall start','right-gap':'Gap from wall end'};
+    lbl.textContent=labels[tag.which]||tag.which;
+    if(tag.which==='width')inp.value=fmtE(o.width);
+    else if(tag.which==='left-gap')inp.value=fmtE(Math.round(o.snapT*hypLen-o.width/2));
+    else inp.value=fmtE(Math.round(hypLen-(o.snapT*hypLen+o.width/2)));
+  }else if(tag.type==='door-dim'){
+    let o=tag.opening,isH=o.snapAxis==='h';
+    let labels={width:'Door width','left-gap':'Gap to left','right-gap':'Gap to right','top-gap':'Gap above','bottom-gap':'Gap below'};
+    lbl.textContent=labels[tag.which]||tag.which;
+    if(tag.which==='width'){inp.value=fmtE(o.width);}
+    else{
+      // Use the stored edge coords from the tag
+      let hw=o.width/2;
+      if(tag.which==='left-gap'||tag.which==='top-gap'){
+        let edge=tag.wallPieceX1??tag.wallPieceY1??0;
+        inp.value=fmtE(Math.round(o.pos-hw-edge));
+      }else{
+        let edge=tag.wallPieceX2??tag.wallPieceY2??(isH?roomW:roomH);
+        inp.value=fmtE(Math.round(edge-(o.pos+hw)));
+      }
+    }
+  }else if(tag.type==='dw-len'){lbl.textContent='Wall length';inp.value=fmtE(wLen(tag.wall));}
+  else if(tag.type==='dw-ep-x'){let px=tag.ep==='p1'?tag.wall.x1:tag.wall.x2;lbl.textContent=tag.side==='left'?'From left':'From right';inp.value=fmtE(tag.side==='left'?px:roomW-px);}
+  else if(tag.type==='dw-ep-y'){let py=tag.ep==='p1'?tag.wall.y1:tag.wall.y2;lbl.textContent=tag.side==='top'?'From top':'From bottom';inp.value=fmtE(tag.side==='top'?py:roomH-py);}
+  else if(tag.type==='cg'){
+    let c=tag.corner,gaps=gapDims(c),g=tag.axis==='h'?gaps.h:gaps.v;
+    lbl.textContent=tag.axis==='h'?'Gap from leg A to next wall':'Gap from leg B to next wall';
+    inp.value=fmtE(g.val);
+  }
+  else if(tag.type==='ku_gap'){
+    let{ku,side,alongH}=tag;
+    let bb=kuBB(ku);
+    let{gapLo,gapHi}=kuNearestObjects(ku,bb);
+    let gap=side==='lo'?gapLo:gapHi;
+    lbl.textContent=(side==='lo'?'Gap before unit':'Gap after unit')+' (0 = touching)';
+    inp.value=fmtE(gap);
+  }
+  let ex=Math.min(cx+10,wrap.clientWidth-185),ey=Math.min(cy+10,wrap.clientHeight-115);
+  el.style.left=ex+'px';el.style.top=ey+'px';el.style.display='block';inp.focus();inp.select();
+}
+function closeDim(){document.getElementById('dim-editor').style.display='none';activeDim=null;}
+function confirmDim(){
+  if(!activeDim)return;
+  let val=parseMM(document.getElementById('dim-inp').value);
+  if(isNaN(val)||val<0){alert('Enter a value in mm');return;}
+  saveHistory();
+  let tag=activeDim;
+  if(tag.type==='wp-free')applyWpDim(tag.piece,tag.which,val);
+  else if(tag.type==='corner-door-dim'){
+    let o=tag.opening,hypLen=o.snapHypLen,hw=o.width/2;
+    if(tag.which==='width'){o.width=Math.max(100,val);} 
+    else if(tag.which==='left-gap'){o.snapT=clamp((Math.max(0,val)+hw)/hypLen,hw/hypLen,1-hw/hypLen);}
+    else{o.snapT=clamp((hypLen-Math.max(0,val)-hw)/hypLen,hw/hypLen,1-hw/hypLen);}
+    // Update cx/cy
+    let p1=o.snapP1,p2=o.snapP2;
+    o.cx=p1.x+o.snapT*(p2.x-p1.x);o.cy=p1.y+o.snapT*(p2.y-p1.y);
+  }
+  else if(tag.type==='door-dim'){
+    let o=tag.opening,isH=o.snapAxis==='h';
+    let wallLen=isH?roomW:roomH;
+    if(tag.which==='width'){
+      o.width=Math.max(100,val);
+      o.pos=clamp(o.pos,o.width/2,wallLen-o.width/2);
+    }else if(tag.which==='left-gap'){
+      let fromX=tag.wallPieceX1||0;
+      o.pos=clamp(fromX+Math.max(0,val)+o.width/2,o.width/2,wallLen-o.width/2);
+    }else if(tag.which==='right-gap'){
+      let toX=tag.wallPieceX2||roomW;
+      o.pos=clamp(toX-Math.max(0,val)-o.width/2,o.width/2,wallLen-o.width/2);
+    }else if(tag.which==='top-gap'){
+      let fromY=tag.wallPieceY1||0;
+      o.pos=clamp(fromY+Math.max(0,val)+o.width/2,o.width/2,wallLen-o.width/2);
+    }else if(tag.which==='bottom-gap'){
+      let toY=tag.wallPieceY2||roomH;
+      o.pos=clamp(toY-Math.max(0,val)-o.width/2,o.width/2,wallLen-o.width/2);
+    }
+    if(isH)o.cx=o.pos; else o.cy=o.pos;
+  }
+  else if(tag.type==='wp-junction'){
+    let p=tag.piece,ob=tag.obBB;
+    if(tag.axis==='x'){let hw=p.horiz?p.len/2:p.thick/2;p.cx=clamp(ob.x1+Math.max(0,val)+hw,hw,roomW-hw);}
+    else{let hh=p.horiz?p.thick/2:p.len/2;p.cy=clamp(ob.y1+Math.max(0,val)+hh,hh,roomH-hh);}
+    clampToRoom(p);
+  }
+  else if(tag.type==='dw-len'){let w=tag.wall,len=wLen(w);if(len===0)return;let r=val/len;w.x2=w.x1+(w.x2-w.x1)*r;w.y2=w.y1+(w.y2-w.y1)*r;}
+  else if(tag.type==='dw-ep-x'){let w=tag.wall,nX=tag.side==='left'?val:roomW-val;nX=clamp(nX,0,roomW);if(tag.ep==='p1')w.x1=nX;else w.x2=nX;}
+  else if(tag.type==='dw-ep-y'){let w=tag.wall,nY=tag.side==='top'?val:roomH-val;nY=clamp(nY,0,roomH);if(tag.ep==='p1')w.y1=nY;else w.y2=nY;}
+  else if(tag.type==='cg')applyCornerGap(tag.corner,tag.axis,val);
+  else if(tag.type==='ku_gap'){
+    let{ku,side,alongH}=tag;
+    let bb=kuBB(ku);
+    let{nearLo,nearHi}=kuNearestObjects(ku,bb);
+    val=Math.max(0,val);
+    if(alongH){
+      let hw=ku.width/2;
+      if(side==='lo') ku.cx=clamp(nearLo+val+hw, hw, roomW-hw);
+      else            ku.cx=clamp(nearHi-val-hw,  hw, roomW-hw);
+    }else{
+      let hh=ku.width/2;
+      if(side==='lo') ku.cy=clamp(nearLo+val+hh, hh, roomH-hh);
+      else            ku.cy=clamp(nearHi-val-hh,  hh, roomH-hh);
+    }
+    anchorKU(ku);
+  }
+  closeDim();showSelected();draw();
+}
+function cancelDim(){closeDim();draw();}
+document.getElementById('dim-inp').addEventListener('keydown',e=>{if(e.key==='Enter')confirmDim();if(e.key==='Escape')cancelDim();});
+
+function addDoor(){
+  let width=parseMM(document.getElementById('opening-width').value)||900;
+  let height=parseMM(document.getElementById('door-height').value)||2030;
+  let thickness=parseMM(document.getElementById('door-thickness').value)||100;
+  let swing=document.getElementById('door-swing').value||'left';
+  // Spawn as a free-floating door in the centre of the room, unsnapped
+  let d={type:'door',wall:null,pos:null,width,height,thickness,sill:0,swing,
+    cx:roomW/2,cy:roomH/2,snapped:false,spawnX:roomW/2,spawnY:roomH/2};
+  saveHistory();openings.push(d);selectedItem=d;setMode('select');showSelected();draw();
+  document.getElementById('status').textContent='Drag to a wall to snap the door';
+}
+
+function addWindow(){
+  let w={type:'window',wall:null,pos:null,width:1000,height:1000,thickness:100,sill:1100,
+    cx:roomW/2,cy:roomH/2,snapped:false,spawnX:roomW/2,spawnY:roomH/2};
+  saveHistory();openings.push(w);selectedItem=w;setMode('select');showSelected();draw();
+  document.getElementById('status').textContent='Drag to a wall to snap the window';
+}
+
+function snapDoor(d){
+  const THRESH=300;
+  let best=THRESH,bestS=null;
+
+  // ── Check corner hypotenuses first (separate angled door path) ──
+  for(let c of corners){
+    if(!c.snapped)continue;
+    let geo=cornerGeometry(c);
+    let p1=geo[1],p2=geo[2]; // hypotenuse endpoints
+    // Project door centre onto hypotenuse line
+    let dx=p2.x-p1.x,dy=p2.y-p1.y,len=Math.hypot(dx,dy);
+    if(len<1)continue;
+    let t=((d.cx-p1.x)*dx+(d.cy-p1.y)*dy)/(len*len);
+    t=clamp(t,0,1);
+    let closestX=p1.x+t*dx*len/len*len,closestY=p1.y+t*dy*len/len*len;
+    // Simpler:
+    let cx2=p1.x+t*(p2.x-p1.x),cy2=p1.y+t*(p2.y-p1.y);
+    let dist=Math.hypot(d.cx-cx2,d.cy-cy2);
+    if(dist<best){best=dist;bestS={type:'corner',corner:c,t,p1,p2,len,cx:cx2,cy:cy2};}
+  }
+
+  if(bestS&&bestS.type==='corner'){
+    d.snapped=true;
+    d.snapType='corner';
+    d.snapCorner=bestS.corner;
+    d.snapT=bestS.t;
+    d.snapHypLen=bestS.len;
+    d.snapP1=bestS.p1;
+    d.snapP2=bestS.p2;
+    d.cx=bestS.cx;
+    d.cy=bestS.cy;
+    d.wall=null;d.snapAxis=null;
+    // Calculate which side of hypotenuse the room interior is on
+    // Use the corner anchor (rx,ry) as a known interior-side reference point
+    let c=bestS.corner;
+    let dx=bestS.p2.x-bestS.p1.x,dy=bestS.p2.y-bestS.p1.y;
+    // Left normal of hyp: (-dy, dx) normalised
+    let nx=-dy,ny=dx;
+    // Dot product of (anchor - p1) with normal tells us which side anchor is on
+    let dot=(c.rx-bestS.p1.x)*nx+(c.ry-bestS.p1.y)*ny;
+    d.snapInward=dot>0?1:-1;
+    return;
+  }
+
+  // ── Standard axis-aligned snap ──
+  // Use same edge system as wall pieces
+  let edges=allSnapEdges(-1);
+  bestS=null;best=THRESH;
+  for(let e of edges){
+    if(e.type==='h'){
+      let dist=Math.abs(d.cy-e.coord);
+      if(dist<best){best=dist;bestS={e,axis:'h'};}
+    }else{
+      let dist=Math.abs(d.cx-e.coord);
+      if(dist<best){best=dist;bestS={e,axis:'v'};}
+    }
+  }
+  if(!bestS){d.snapped=false;d.wall=null;d.snapType=null;return;}
+  let hw=d.width/2,ht=d.thickness/2;
+  let isH=bestS.axis==='h';
+  d.snapped=true;
+  d.snapType='axis';
+  d.snapAxis=bestS.axis;
+  d.snapCoord=bestS.e.coord;
+  // snapInward: points from the wall surface INTO the room interior
+  // If door centre is on the positive side of the surface, interior is in negative direction
+  d.snapInward=isH?(d.cy<bestS.e.coord?1:-1):(d.cx<bestS.e.coord?1:-1);
+  let along=isH?d.cx:d.cy;
+  let wallLen=isH?roomW:roomH;
+  d.pos=clamp(sg(along),hw,wallLen-hw);
+  if(isH){d.cy=bestS.e.coord;d.cx=d.pos;}
+  else{d.cx=bestS.e.coord;d.cy=d.pos;}
+  d.snapCorner=null;
+}
+function addWallPiece(){
+  let p={cx:roomW/2,cy:roomH/2,len:1000,thick:100,horiz:false,snapped:false,snappedEdge:null,snappedFace:null,anchorWallCoord:null,orientationLocked:false,spawnX:roomW/2,spawnY:roomH/2};
+  saveHistory();wallPieces.push(p);selectedItem=p;setMode('select');showSelected();draw();
+  document.getElementById('status').textContent='Drag near any wall — 100mm end snaps to it, dims appear on release';
+}
+function addCorner(){
+  let c={rx:roomW/2,cy:roomH/2,rx:roomW/2,ry:roomH/2,wa:500,ha:500,rot:0,snapped:null};
+  saveHistory();corners.push(c);selectedItem=c;setMode('select');showSelected();draw();
+  document.getElementById('status').textContent='Drag corner to position — use Rotate in sidebar to change orientation';
+}
+
+function showSelected(){
+  let panel=document.getElementById('selected-panel'),info=document.getElementById('selected-info');
+  if(!selectedItem){panel.style.display='none';return;}
+  panel.style.display='block';
+  if(wallPieces.includes(selectedItem)){
+    let p=selectedItem;
+    info.innerHTML=`<div style="font-size:11px;font-weight:500;color:var(--color-text-secondary);margin-bottom:6px;">Wall piece</div>
+      <div style="font-size:11px;color:var(--color-text-secondary);">Status</div>
+      <div style="font-size:11px;margin-bottom:4px;">${p.snapped?'Snapped to '+p.snappedEdge:'Not snapped — drag to a wall'}</div>
+      <div style="font-size:11px;color:var(--color-text-secondary);">Length</div><div style="font-size:13px;font-weight:500;">${fmtD(p.len)}</div>
+      <div style="font-size:11px;color:var(--color-text-secondary);margin-top:4px;">Thickness</div><div style="font-size:13px;font-weight:500;">${fmtD(p.thick)}</div>
+      <button style="margin-top:8px;width:100%;${p.locked?'background:var(--color-border-secondary);':''}" onclick="selectedItem.locked=!selectedItem.locked;showSelected();draw();">
+        <i class="ti ti-${p.locked?'lock':'lock-open'}" aria-hidden="true"></i> ${p.locked?'Locked — click to unlock':'Lock position'}
+      </button>
+      <button style="margin-top:6px;" onclick="deleteSelected()"><i class="ti ti-trash" aria-hidden="true"></i> Delete</button>`;
+  }else if(corners.includes(selectedItem)){
+    let c=selectedItem;
+    let rotNames=['Top-left (↘)','Top-right (↙)','Bottom-right (↖)','Bottom-left (↗)'];
+    info.innerHTML=`<div style="font-size:11px;font-weight:500;color:var(--color-text-secondary);margin-bottom:6px;">Angled corner</div>
+      <div style="font-size:11px;color:var(--color-text-secondary);">Orientation</div>
+      <div style="font-size:11px;margin-bottom:6px;">${rotNames[c.rot]}</div>
+      <button style="width:100%;margin-bottom:8px;" onclick="selectedItem.rot=(selectedItem.rot+1)%4;showSelected();draw();">↻ Rotate 90°</button>
+      <div style="font-size:11px;color:var(--color-text-secondary);">Leg A</div><div style="font-size:13px;font-weight:500;">${fmtD(c.wa)}</div>
+      <div style="font-size:11px;color:var(--color-text-secondary);margin-top:4px;">Leg B</div><div style="font-size:13px;font-weight:500;">${fmtD(c.ha)}</div>
+      <div style="font-size:11px;color:var(--color-text-secondary);margin-top:4px;">Diagonal</div><div style="font-size:13px;font-weight:500;">${fmtD(Math.hypot(c.wa,c.ha))}</div>
+      <button style="margin-top:8px;width:100%;${c.locked?'background:var(--color-border-secondary);':''}" onclick="selectedItem.locked=!selectedItem.locked;showSelected();draw();">
+        <i class="ti ti-${c.locked?'lock':'lock-open'}"></i> ${c.locked?'Locked — click to unlock':'Lock position'}
+      </button>
+      <button style="margin-top:6px;" onclick="deleteSelected()"><i class="ti ti-trash" aria-hidden="true"></i> Delete</button>`;
+  }else if(openings.includes(selectedItem)){
+    let o=selectedItem;
+    let isDoor=o.type==='door';
+    if(isDoor){
+      info.innerHTML=`
+        <div style="font-size:11px;font-weight:500;color:var(--color-text-secondary);margin-bottom:8px;">Door</div>
+        <label style="font-size:11px;color:var(--color-text-secondary);">Width (mm)</label>
+        <div style="font-size:13px;font-weight:500;margin-bottom:6px;">${fmtD(o.width)}</div>
+        <label style="font-size:11px;color:var(--color-text-secondary);">Height (mm)</label>
+        <input type="text" id="sel-door-height" value="${o.height||2030}" style="width:100%;font-size:12px;padding:4px 7px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);margin-bottom:2px;"/>
+        <div style="font-size:10px;color:var(--color-text-secondary);margin-bottom:6px;">Sill always at floor (0mm)</div>
+        <label style="font-size:11px;color:var(--color-text-secondary);">Swing</label>
+        <div style="display:flex;gap:6px;margin-top:4px;margin-bottom:8px;">
+          <button style="flex:1;${o.swing==='left'?'background:var(--color-border-secondary);':''}" onclick="selectedItem.swing='left';showSelected();draw();">Left</button>
+          <button style="flex:1;${o.swing==='right'?'background:var(--color-border-secondary);':''}" onclick="selectedItem.swing='right';showSelected();draw();">Right</button>
+        </div>
+        <button onclick="selectedItem.snapInward=(selectedItem.snapInward||1)*-1;draw();" style="width:100%;margin-bottom:6px;"><i class="ti ti-flip-vertical"></i> Flip opening side</button>
+        <button style="width:100%;margin-bottom:6px;${o.locked?'background:var(--color-border-secondary);':''}" onclick="selectedItem.locked=!selectedItem.locked;showSelected();draw();">
+          <i class="ti ti-${o.locked?'lock':'lock-open'}"></i> ${o.locked?'Locked — click to unlock':'Lock position'}
+        </button>
+        <button onclick="deleteSelected()"><i class="ti ti-trash"></i> Delete</button>`;
+      // Wire up height input
+      setTimeout(()=>{
+        let hi=document.getElementById('sel-door-height');
+        if(hi)hi.addEventListener('change',()=>{
+          let v=parseMM(hi.value);
+          if(v>0){o.height=v;o.sill=0;}
+          draw();
+        });
+      },0);
+    }else{
+      // Window
+      info.innerHTML=`<div style="font-size:11px;font-weight:500;color:var(--color-text-secondary);margin-bottom:8px;">Window</div>
+        <label style="font-size:11px;color:var(--color-text-secondary);">Width (mm)</label>
+        <input type="text" id="sel-win-width" value="${o.width}" style="width:100%;font-size:12px;padding:4px 7px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);margin-bottom:6px;"/>
+        <label style="font-size:11px;color:var(--color-text-secondary);">Height (mm)</label>
+        <input type="text" id="sel-win-height" value="${o.height||1000}" style="width:100%;font-size:12px;padding:4px 7px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);margin-bottom:6px;"/>
+        <label style="font-size:11px;color:var(--color-text-secondary);">Sill height (mm)</label>
+        <input type="text" id="sel-win-sill" value="${o.sill||1100}" style="width:100%;font-size:12px;padding:4px 7px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);margin-bottom:2px;"/>
+        <div id="sel-win-head" style="font-size:10px;color:var(--color-text-secondary);margin-bottom:8px;">Head at ${fmtD((o.sill||1100)+(o.height||1000))}mm</div>
+        <button style="width:100%;margin-bottom:6px;${o.locked?'background:var(--color-border-secondary);':''}" onclick="selectedItem.locked=!selectedItem.locked;showSelected();draw();">
+          <i class="ti ti-${o.locked?'lock':'lock-open'}"></i> ${o.locked?'Locked — click to unlock':'Lock position'}
+        </button>
+        <button onclick="deleteSelected()"><i class="ti ti-trash"></i> Delete</button>`;
+      setTimeout(()=>{
+        const updateHead=()=>{let h=document.getElementById('sel-win-head');if(h)h.textContent='Head at '+fmtD((o.sill||1100)+(o.height||1000))+'mm';};
+        let wi=document.getElementById('sel-win-width');
+        let hi=document.getElementById('sel-win-height');
+        let si=document.getElementById('sel-win-sill');
+        if(wi)wi.addEventListener('change',()=>{let v=parseMM(wi.value);if(v>0){o.width=v;draw();}});
+        if(hi)hi.addEventListener('change',()=>{let v=parseMM(hi.value);if(v>0){o.height=v;updateHead();draw();}});
+        if(si)si.addEventListener('change',()=>{let v=parseMM(si.value);if(v>=0){o.sill=v;updateHead();draw();}});
+      },0);
+    }
+  }else if(roomLabels.includes(selectedItem)){
+    let l=selectedItem;
+    info.innerHTML=`<div style="font-size:11px;font-weight:500;color:var(--color-text-secondary);margin-bottom:6px;">Room label</div>
+      <label style="font-size:11px;color:var(--color-text-secondary);">Text</label>
+      <input type="text" value="${l.text.replace(/"/g,'&quot;')}" style="width:100%;font-size:12px;padding:4px 7px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);margin-bottom:4px;" oninput="selectedItem.text=this.value;draw()"/>
+      <button style="width:100%;margin-bottom:6px;${l.locked?'background:var(--color-border-secondary);':''}" onclick="selectedItem.locked=!selectedItem.locked;showSelected();draw();">
+        <i class="ti ti-${l.locked?'lock':'lock-open'}"></i> ${l.locked?'Locked — click to unlock':'Lock position'}
+      </button>
+      <button onclick="deleteSelected()"><i class="ti ti-trash"></i> Delete</button>`;
+  }else if(kitchenUnits.includes(selectedItem)){
+    let ku=selectedItem,spec=KU_SPECS[ku.kuType];
+    let iStyle='width:100%;font-size:12px;padding:4px 7px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);margin-bottom:6px;';
+    let selStyle='width:100%;font-size:12px;padding:4px 7px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);margin-bottom:6px;';
+    info.innerHTML=`<div style="font-size:11px;font-weight:500;color:var(--color-text-secondary);margin-bottom:6px;">${spec.label}</div>
+      <label style="font-size:11px;color:var(--color-text-secondary);">Type</label>
+      <select id="sel-ku-type" style="${selStyle}">
+        <option value="base"${ku.kuType==='base'?' selected':''}>Base unit</option>
+        <option value="wall"${ku.kuType==='wall'?' selected':''}>Wall unit</option>
+        <option value="tall"${ku.kuType==='tall'?' selected':''}>Tall unit</option>
+        <option value="island"${ku.kuType==='island'?' selected':''}>Island</option>
+      </select>
+      <label style="font-size:11px;color:var(--color-text-secondary);">Width (mm)</label>
+      <select id="sel-ku-width" style="${selStyle}">
+        ${[100,150,200,300,400,500,600,800,1000,1200].map(w=>`<option value="${w}"${ku.width===w?' selected':''}>${w}mm</option>`).join('')}
+      </select>
+      <label style="font-size:11px;color:var(--color-text-secondary);">Carcass depth (mm)</label>
+      <input type="text" id="sel-ku-cdepth" value="${ku.carcassDepth}" style="${iStyle}"/>
+      <label style="font-size:11px;color:var(--color-text-secondary);">Door depth (mm)</label>
+      <input type="text" id="sel-ku-ddepth" value="${ku.doorDepth}" style="${iStyle}"/>
+      <label style="font-size:11px;color:var(--color-text-secondary);">Total height (mm)</label>
+      <input type="text" id="sel-ku-height" value="${ku.totalH}" style="${iStyle}"/>
+      <div style="font-size:10px;color:var(--color-text-secondary);margin-bottom:6px;">
+        Total footprint depth: <strong>${ku.carcassDepth+ku.doorDepth}mm</strong>
+        ${ku.plinth?`· Plinth: ${ku.plinth}mm`:''}
+        ${ku.overhead?'· <em>Overhead unit</em>':''}
+      </div>
+      <button style="width:100%;margin-bottom:6px;" onclick="selectedItem.horiz=!selectedItem.horiz;selectedItem.snapped=false;selectedItem.snappedFace=null;anchorKU(selectedItem);showSelected();draw();">↻ Rotate 90°</button>
+      <button style="width:100%;margin-bottom:6px;${ku.locked?'background:var(--color-border-secondary);':''}" onclick="selectedItem.locked=!selectedItem.locked;showSelected();draw();">
+        <i class="ti ti-${ku.locked?'lock':'lock-open'}"></i> ${ku.locked?'Locked — click to unlock':'Lock position'}
+      </button>
+      <button onclick="deleteSelected()"><i class="ti ti-trash"></i> Delete</button>`;
+    setTimeout(()=>{
+      let typeEl=document.getElementById('sel-ku-type');
+      let wEl=document.getElementById('sel-ku-width');
+      let cdEl=document.getElementById('sel-ku-cdepth');
+      let ddEl=document.getElementById('sel-ku-ddepth');
+      let hEl=document.getElementById('sel-ku-height');
+      function applyKUchanges(){
+        let newType=typeEl.value;
+        let newSpec=KU_SPECS[newType];
+        ku.kuType=newType;
+        ku.label=newSpec.label;
+        ku.overhead=newSpec.overhead||false;
+        ku.snapToWall=newSpec.snapToWall;
+        ku.carcassDepth=parseMM(cdEl.value)||newSpec.carcassDepth;
+        ku.doorDepth=parseMM(ddEl.value)||newSpec.doorDepth;
+        ku.depth=ku.carcassDepth+ku.doorDepth;
+        ku.totalH=parseMM(hEl.value)||newSpec.carcassH;
+        ku.width=parseInt(wEl.value)||600;
+        ku.plinth=newSpec.plinth;
+        anchorKU(ku);
+        showSelected();draw();
+      }
+      if(typeEl)typeEl.addEventListener('change',()=>{
+        let ns=KU_SPECS[typeEl.value];
+        cdEl.value=ns.carcassDepth;ddEl.value=ns.doorDepth;hEl.value=ns.carcassH;
+        applyKUchanges();
+      });
+      if(wEl)wEl.addEventListener('change',applyKUchanges);
+      if(cdEl)cdEl.addEventListener('change',applyKUchanges);
+      if(ddEl)ddEl.addEventListener('change',applyKUchanges);
+      if(hEl)hEl.addEventListener('change',applyKUchanges);
+    },0);
+  }else{
+    let w=selectedItem;
+    info.innerHTML=`<div style="font-size:11px;font-weight:500;color:var(--color-text-secondary);margin-bottom:6px;">Drawn wall</div>
+      <div style="font-size:11px;color:var(--color-text-secondary);">Length</div><div style="font-size:13px;font-weight:500;">${fmtD(wLen(w))}</div>
+      <div style="font-size:11px;color:var(--color-text-secondary);margin-top:4px;">Angle</div><div style="font-size:13px;font-weight:500;">${Math.round(wAng(w))}°</div>
+      <button style="margin-top:8px;" onclick="deleteSelected()"><i class="ti ti-trash" aria-hidden="true"></i> Delete</button>`;
+  }
+}
+function deleteSelected(){
+  if(!selectedItem)return;saveHistory();
+  drawnWalls=drawnWalls.filter(w=>w!==selectedItem);
+  wallPieces=wallPieces.filter(p=>p!==selectedItem);
+  corners=corners.filter(c=>c!==selectedItem);
+  openings=openings.filter(o=>o!==selectedItem);
+  roomLabels=roomLabels.filter(l=>l!==selectedItem);
+  kitchenUnits=kitchenUnits.filter(k=>k!==selectedItem);
+  selectedItem=null;showSelected();draw();
+}
+function confirmDrawnWall(){
+  if(!pendingDrawn)return;
+  let val=parseMM(document.getElementById('wc-input').value);
+  if(isNaN(val)||val<=0){alert('Enter length in mm');return;}
+  let dx=pendingDrawn.x2-pendingDrawn.x1,dy=pendingDrawn.y2-pendingDrawn.y1,orig=Math.hypot(dx,dy);
+  saveHistory();
+  drawnWalls.push({x1:pendingDrawn.x1,y1:pendingDrawn.y1,x2:pendingDrawn.x1+dx*(val/orig),y2:pendingDrawn.y1+dy*(val/orig)});
+  pendingDrawn=null;document.getElementById('wall-confirm-panel').style.display='none';
+  document.getElementById('status').textContent='Wall added';draw();
+}
+function cancelDrawnWall(){pendingDrawn=null;drawStart=null;document.getElementById('wall-confirm-panel').style.display='none';draw();}
+document.getElementById('wc-input').addEventListener('keydown',e=>{if(e.key==='Enter')confirmDrawnWall();if(e.key==='Escape')cancelDrawnWall();});
+
+// ── Openings (doors & windows) ────────────────────────────────────────────
+// Opening: {type:'door'|'window', wall:'top'|'bottom'|'left'|'right', pos:mm along wall, width:mm, swing:'left'|'right'}
+// pos = distance from start of wall (left edge for H walls, top edge for V walls)
+const SNAP_WALL_THRESH=150; // mm
+function nearestRoomWall(pt){
+  let d=[
+    {wall:'top',   dist:pt.y,          pos:pt.x},
+    {wall:'bottom',dist:roomH-pt.y,    pos:pt.x},
+    {wall:'left',  dist:pt.x,          pos:pt.y},
+    {wall:'right', dist:roomW-pt.x,    pos:pt.y},
+  ];
+  d.sort((a,b)=>a.dist-b.dist);
+  return d[0].dist<SNAP_WALL_THRESH?d[0]:null;
+}
+function placeOpening(pt,type,width,swing,height,thickness){
+  let near=nearestRoomWall(pt);if(!near)return null;
+  let wallLen=near.wall==='top'||near.wall==='bottom'?roomW:roomH;
+  let pos=clamp(near.pos,width/2,wallLen-width/2);
+  // Doors: sill=0 (floor level), height=2030, thickness=100
+  // Windows: sill/height set later when we build window defaults
+  let sill=type==='door'?0:null;
+  return{type,wall:near.wall,pos,width,swing:swing||'left',
+    height:height||2030,thickness:thickness||100,sill};
+}
+function slideOpening(o,mx,my){
+  let wallLen=o.wall==='top'||o.wall==='bottom'?roomW:roomH;
+  let raw=o.wall==='top'||o.wall==='bottom'?mx:my;
+  o.pos=clamp(sg(raw),o.width/2,wallLen-o.width/2);
+}
+function ptInOpening(mx,my,o){
+  // Corner snapped door — check before openingBB which doesn't handle this case
+  if(o.snapType==='corner'&&o.snapCorner){
+    let midX=o.cx,midY=o.cy;
+    if(o.snapP1&&o.snapP2){
+      midX=o.snapP1.x+o.snapT*(o.snapP2.x-o.snapP1.x);
+      midY=o.snapP1.y+o.snapT*(o.snapP2.y-o.snapP1.y);
+    }
+    return Math.hypot(mx-midX,my-midY)<(o.width/2+100);
+  }
+  let bb=openingBB(o);
+  if(!bb)return false;
+  let {x1,y1,x2,y2}=bb;
+  if(mx>=x1&&mx<=x2&&my>=y1&&my<=y2)return true;
+  if(o.snapped&&o.type==='door'){
+    let isH=o.snapAxis==='h';
+    let wc=o.snapCoord,hw=o.width/2,inward=o.snapInward||1;
+    let swingR=(o.width-160)/2; // leaf length in mm (840/2 approx)
+    if(isH){
+      let cy=wc+(inward>0?swingR/2:-swingR/2);
+      if(mx>=o.pos-hw&&mx<=o.pos+hw&&Math.abs(my-wc)<swingR)return true;
+    }else{
+      let cx=wc+(inward>0?swingR/2:-swingR/2);
+      if(my>=o.pos-hw&&my<=o.pos+hw&&Math.abs(mx-wc)<swingR)return true;
+    }
+  }
+  return false;
+}
+function openingBB(o){
+  if(!o.snapped&&o.cx!==undefined){
+    let hw=o.width/2,ht=(o.thickness||WALL_T)/2;
+    return{x1:o.cx-hw,y1:o.cy-ht,x2:o.cx+hw,y2:o.cy+ht};
+  }
+  let hw=o.width/2,ht=(o.thickness||WALL_T)/2;
+  // New snap format using snapAxis/snapCoord
+  if(o.snapAxis==='h'){
+    return{x1:o.pos-hw,y1:o.snapCoord-ht,x2:o.pos+hw,y2:o.snapCoord+ht};
+  }else if(o.snapAxis==='v'){
+    return{x1:o.snapCoord-ht,y1:o.pos-hw,x2:o.snapCoord+ht,y2:o.pos+hw};
+  }
+  // Legacy format
+  if(o.wall==='top')   return{x1:o.pos-hw,y1:-ht,x2:o.pos+hw,y2:ht};
+  if(o.wall==='bottom')return{x1:o.pos-hw,y1:roomH-ht,x2:o.pos+hw,y2:roomH+ht};
+  if(o.wall==='left')  return{x1:-ht,y1:o.pos-hw,x2:ht,y2:o.pos+hw};
+  if(o.wall==='right') return{x1:roomW-ht,y1:o.pos-hw,x2:roomW+ht,y2:o.pos+hw};
+}
+
+function drawOpenings(){
+  let dark=isDark();
+  for(let o of openings){
+    let isSel=selectedItem===o,isDragO=dragging===o;
+
+    // Unsnapped free-floating door — draw as a simple rectangle
+    if(!o.snapped&&o.cx!==undefined){
+      let bb=openingBB(o);
+      let c1=toC(bb.x1,bb.y1),c2=toC(bb.x2,bb.y2);
+      ctx.fillStyle=isDragO?(dark?'rgba(29,158,117,0.20)':'rgba(29,158,117,0.13)'):(dark?'rgba(211,90,48,0.18)':'rgba(211,90,48,0.12)');
+      ctx.strokeStyle=isDragO?'#1D9E75':'#D85A30';
+      ctx.lineWidth=1.5;ctx.setLineDash([]);
+      ctx.fillRect(c1.x,c1.y,c2.x-c1.x,c2.y-c1.y);
+      ctx.strokeRect(c1.x,c1.y,c2.x-c1.x,c2.y-c1.y);
+      // Label
+      ctx.font='10px var(--font-sans)';ctx.fillStyle=isDragO?'#1D9E75':'#D85A30';
+      ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(o.type==='door'?'Door':'Window',(c1.x+c2.x)/2,(c1.y+c2.y)/2);
+      continue;
+    }
+
+    // For standard (non-corner, snapped) openings
+    let bb=openingBB(o);
+
+    // ── Corner (angled) door rendering ──────────────────────────────────────
+    if(o.snapType==='corner'&&o.snapCorner){      // Guard: if corner was deleted, clear snap
+      if(!corners.includes(o.snapCorner)){o.snapType=null;o.snapped=false;o.snapCorner=null;}
+      else{
+      let p1=o.snapP1,p2=o.snapP2;
+      let hypLen=o.snapHypLen;
+      let ang=Math.atan2(p2.y-p1.y,p2.x-p1.x);
+      let midMM={x:p1.x+o.snapT*(p2.x-p1.x),y:p1.y+o.snapT*(p2.y-p1.y)};
+      let midPx=toC(midMM.x,midMM.y);
+      let wPx=o.width*scale;
+      let archPx=80*scale;
+      let leafLen=wPx-2*archPx;
+      let thick=(o.thickness||100)*scale;
+      // Unit vector along hyp
+      let ux=(p2.x-p1.x)/hypLen,uy=(p2.y-p1.y)/hypLen;
+      // Perpendicular — use snapInward to determine which side
+      let inward=o.snapInward||1;
+      let nx=-uy*inward,ny=ux*inward;
+
+      // Jamb end points in world coords
+      let j1s=toC(midMM.x-o.width/2*ux,midMM.y-o.width/2*uy);
+      let j1e=toC(midMM.x-o.width/2*ux+thick*nx,midMM.y-o.width/2*uy+thick*ny);
+      let j2s=toC(midMM.x+o.width/2*ux,midMM.y+o.width/2*uy);
+      let j2e=toC(midMM.x+o.width/2*ux+thick*nx,midMM.y+o.width/2*uy+thick*ny);
+
+      ctx.strokeStyle=isSel?'#1D9E75':(dark?'#ccc':'#333');ctx.lineWidth=1.5;ctx.setLineDash([]);
+      ctx.beginPath();ctx.moveTo(j1s.x,j1s.y);ctx.lineTo(j1e.x,j1e.y);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(j2s.x,j2s.y);ctx.lineTo(j2e.x,j2e.y);ctx.stroke();
+
+      // Hinge point on wall face
+      let archMM=80;
+      let hingeOff=(o.swing==='left'?(-o.width/2+archMM):(o.width/2-archMM));
+      let hingeWall={x:midMM.x+hingeOff*ux,y:midMM.y+hingeOff*uy};
+      let hingePx=toC(hingeWall.x,hingeWall.y);
+      let leafLenMM=o.width-2*archMM;
+      // Leaf tip (perpendicular into room)
+      let leafTip={x:hingeWall.x+leafLenMM*nx,y:hingeWall.y+leafLenMM*ny};
+      let leafTipPx=toC(leafTip.x,leafTip.y);
+
+      if(o.type==='door'){
+        // Solid door leaf
+        ctx.strokeStyle=isSel?'#1D9E75':(dark?'#bbb':'#444');ctx.lineWidth=2;
+        ctx.beginPath();ctx.moveTo(hingePx.x,hingePx.y);ctx.lineTo(leafTipPx.x,leafTipPx.y);ctx.stroke();
+
+        // Quarter arc in rotated space
+        ctx.save();
+        ctx.translate(hingePx.x,hingePx.y);
+        ctx.rotate(ang);
+        let rPx=leafLenMM*scale;
+        let a1=Math.PI/2*inward;
+        let a2=o.swing==='left'?0:Math.PI;
+        let ccw=(inward>0)===(o.swing==='left');
+        ctx.strokeStyle=isSel?'rgba(29,158,117,0.5)':'rgba(150,150,150,0.4)';ctx.lineWidth=1;ctx.setLineDash([4,4]);
+        ctx.beginPath();ctx.arc(0,0,rPx,a1,a2,ccw);ctx.stroke();ctx.setLineDash([]);
+        ctx.restore();
+      }else{
+        // Window: double line across opening, parallel to wall face
+        let thickPx=(o.thickness||100)*scale;
+        let t1px=0.33,t2px=0.67;
+        // Two lines across the opening at 1/3 and 2/3 of thickness
+        let mkLine=(t)=>{
+          let offX=nx*thickPx*t,offY=ny*thickPx*t;
+          ctx.beginPath();
+          ctx.moveTo(j1s.x+offX,j1s.y+offY);
+          ctx.lineTo(j2s.x+offX,j2s.y+offY);
+          ctx.stroke();
+        };
+        ctx.strokeStyle=isSel?'#1D9E75':(dark?'#ccc':'#333');ctx.lineWidth=1.5;ctx.setLineDash([]);
+        mkLine(t1px);mkLine(t2px);
+      }
+
+      // Dims using drawDimLine in world coords (clickable)
+      if(isSel&&!isDragO){
+        let gStart=Math.round(o.snapT*hypLen-o.width/2);
+        let gEnd=Math.round(hypLen-(o.snapT*hypLen+o.width/2));
+        // Width dim along hyp
+        drawDimLine(j1s.x,j1s.y,j2s.x,j2s.y,fmtD(o.width),-1,{type:'corner-door-dim',opening:o,which:'width'},true);
+        // Left gap along hyp
+        let gStartPt=toC(p1.x,p1.y);
+        drawDimLine(gStartPt.x,gStartPt.y,j1s.x,j1s.y,fmtD(gStart),-1,{type:'corner-door-dim',opening:o,which:'left-gap'},true);
+        // Right gap along hyp
+        let gEndPt=toC(p2.x,p2.y);
+        drawDimLine(j2s.x,j2s.y,gEndPt.x,gEndPt.y,fmtD(gEnd),-1,{type:'corner-door-dim',opening:o,which:'right-gap'},true);
+      }
+      continue;
+      }
+    }
+    let c1=toC(bb.x1,bb.y1),c2=toC(bb.x2,bb.y2);
+    let hw=o.width/2*scale,ht=WALL_T/2*scale;
+    // Determine orientation from snapAxis (new) or wall (legacy)
+    let isH=o.snapAxis?o.snapAxis==='h':(o.wall==='top'||o.wall==='bottom');
+    let wallCoord=o.snapAxis?(o.snapAxis==='h'?o.snapCoord:o.snapCoord):(o.wall==='top'?0:o.wall==='bottom'?roomH:o.wall==='left'?0:roomW);
+    let wallSide=o.snapAxis?null:o.wall; // legacy
+
+    // White gap in wall
+    ctx.fillStyle=dark?'rgba(30,30,30,1)':'rgba(255,255,255,1)';
+    ctx.fillRect(c1.x,c1.y,c2.x-c1.x,c2.y-c1.y);
+
+    ctx.save();
+    let inward=o.snapInward||(isH?(wallCoord<roomH/2?1:-1):(wallCoord<roomW/2?1:-1));
+    let doorThick=(o.thickness||100)*scale;
+    const ARCH=80;
+    if(o.type==='door'){
+      ctx.strokeStyle=isSel?'#1D9E75':(dark?'#ccc':'#333');ctx.lineWidth=1.5;ctx.setLineDash([]);
+      if(isH){
+        // Horizontal wall — door leaf goes perpendicular (into room, Y direction)
+        let lx1=toC(o.pos-o.width/2,wallCoord).x,lx2=toC(o.pos+o.width/2,wallCoord).x;
+        let wy=toC(0,wallCoord).y;
+        let archPx=ARCH*scale;
+        // Hinge jamb and free jamb (on wall face)
+        let hingeX=o.swing==='left'?lx1+archPx:lx2-archPx;
+        let freeJambX=o.swing==='left'?lx2-archPx:lx1+archPx;
+        let leafLen=Math.abs(freeJambX-hingeX); // 840mm in px
+        // Jamb lines (full width, perpendicular to wall)
+        ctx.beginPath();ctx.moveTo(lx1,wy);ctx.lineTo(lx1,wy+doorThick*inward);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(lx2,wy);ctx.lineTo(lx2,wy+doorThick*inward);ctx.stroke();
+        // Door leaf: solid line from hinge on wall, perpendicular into room
+        let leafEndY=wy+leafLen*inward;
+        ctx.strokeStyle=isSel?'#1D9E75':(dark?'#bbb':'#444');ctx.lineWidth=2;
+        ctx.beginPath();ctx.moveTo(hingeX,wy);ctx.lineTo(hingeX,leafEndY);ctx.stroke();
+        // Quarter arc: pivot=hinge, from leaf tip to open position along wall
+        // Open position: (hingeX + leafLen * swingDir, wy) where swingDir depends on swing
+        let swingDir=o.swing==='left'?1:-1;
+        let arcEndX=hingeX+leafLen*swingDir;
+        // Arc from leaf tip to open position — exactly quarter circle
+        // ccw: inward=down(+1), swing=left → arc goes counterclockwise (true)
+        //       inward=down(+1), swing=right → clockwise (false)
+        //       inward=up(-1),  swing=left → clockwise (false)
+        //       inward=up(-1),  swing=right → counterclockwise (true)
+        let ccw=(inward>0)===(o.swing==='left');
+        let a1=Math.PI/2*inward;           // leaf tip: pointing into room (±90°)
+        let a2=o.swing==='left'?0:Math.PI; // open position: along wall toward swing side
+        ctx.strokeStyle=isSel?'rgba(29,158,117,0.5)':'rgba(150,150,150,0.4)';ctx.lineWidth=1;ctx.setLineDash([4,4]);
+        ctx.beginPath();ctx.arc(hingeX,wy,leafLen,a1,a2,ccw);ctx.stroke();ctx.setLineDash([]);
+      }else{
+        // Vertical wall — door leaf goes perpendicular (into room, X direction)
+        let ly1=toC(wallCoord,o.pos-o.width/2).y,ly2=toC(wallCoord,o.pos+o.width/2).y;
+        let wx=toC(wallCoord,0).x;
+        let archPx=ARCH*scale;
+        let hingeY=o.swing==='left'?ly1+archPx:ly2-archPx;
+        let freeJambY=o.swing==='left'?ly2-archPx:ly1+archPx;
+        let leafLen=Math.abs(freeJambY-hingeY);
+        // Jamb lines
+        ctx.beginPath();ctx.moveTo(wx,ly1);ctx.lineTo(wx+doorThick*inward,ly1);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(wx,ly2);ctx.lineTo(wx+doorThick*inward,ly2);ctx.stroke();
+        // Door leaf: from hinge perpendicular into room
+        let leafEndX=wx+leafLen*inward;
+        ctx.strokeStyle=isSel?'#1D9E75':(dark?'#bbb':'#444');ctx.lineWidth=2;
+        ctx.beginPath();ctx.moveTo(wx,hingeY);ctx.lineTo(leafEndX,hingeY);ctx.stroke();
+        // Quarter arc
+        let swingDir=o.swing==='left'?1:-1;
+        let arcEndY=hingeY+leafLen*swingDir;
+        let a1=inward>0?0:Math.PI;   // pointing into room
+        let a2=o.swing==='left'?Math.PI/2:-Math.PI/2; // pointing along wall
+        // ccw: inward=right(+1), swing=left → clockwise (false)
+        //       inward=right(+1), swing=right → counterclockwise (true)
+        //       inward=left(-1),  swing=left → counterclockwise (true)
+        //       inward=left(-1),  swing=right → clockwise (false)
+        let ccw=(inward>0)!==(o.swing==='left');
+        ctx.strokeStyle=isSel?'rgba(29,158,117,0.5)':'rgba(150,150,150,0.4)';ctx.lineWidth=1;ctx.setLineDash([4,4]);
+        ctx.beginPath();ctx.arc(wx,hingeY,leafLen,a1,a2,ccw);ctx.stroke();ctx.setLineDash([]);
+      }
+    }else{
+      ctx.strokeStyle=isSel?'#1D9E75':(dark?'#ccc':'#333');ctx.lineWidth=1.5;ctx.setLineDash([]);
+      if(isH){
+        let lx1=toC(o.pos-o.width/2,wallCoord).x,lx2=toC(o.pos+o.width/2,wallCoord).x;
+        let wy=toC(0,wallCoord).y,inner=wy+doorThick*inward;
+        let t1=wy+(inner-wy)*0.33,t2=wy+(inner-wy)*0.67;
+        ctx.beginPath();ctx.moveTo(lx1,t1);ctx.lineTo(lx2,t1);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(lx1,t2);ctx.lineTo(lx2,t2);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(lx1,wy);ctx.lineTo(lx1,inner);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(lx2,wy);ctx.lineTo(lx2,inner);ctx.stroke();
+      }else{
+        let ly1=toC(wallCoord,o.pos-o.width/2).y,ly2=toC(wallCoord,o.pos+o.width/2).y;
+        let wx=toC(wallCoord,0).x,inner=wx+doorThick*inward;
+        let t1=wx+(inner-wx)*0.33,t2=wx+(inner-wx)*0.67;
+        ctx.beginPath();ctx.moveTo(t1,ly1);ctx.lineTo(t1,ly2);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(t2,ly1);ctx.lineTo(t2,ly2);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(wx,ly1);ctx.lineTo(inner,ly1);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(wx,ly2);ctx.lineTo(inner,ly2);ctx.stroke();
+      }
+    }
+    ctx.restore();
+
+    // Dims — only when selected and not dragging
+    if(isSel&&!isDragO&&o.snapped){
+      let side=inward*-1;
+      // Find the wall piece the door is snapped to (if any) for accurate gap measurement
+      // Scan along the wall in each direction from the door edges to find nearest object
+      // This handles wall pieces, other doors, and room walls correctly
+      let wc=wallCoord;
+      let doorStart=o.pos-o.width/2;
+      let doorEnd=o.pos+o.width/2;
+
+      // Find the wall piece the door is snapped to — its ends are the default scan boundaries
+      // Only look for a snapped wall piece if the door is NOT on an outer room wall
+      let snappedWP=null;
+      let isOnRoomWall=isH?(Math.abs(wc)<5||Math.abs(wc-roomH)<5):(Math.abs(wc)<5||Math.abs(wc-roomW)<5);
+      if(!isOnRoomWall){
+        for(let wp of wallPieces){
+          let b=wpBB(wp);
+          if(isH){if(Math.abs(b.y1-wc)<5||Math.abs(b.y2-wc)<5){snappedWP=b;break;}}
+          else{if(Math.abs(b.x1-wc)<5||Math.abs(b.x2-wc)<5){snappedWP=b;break;}}
+        }
+      }
+      // Default scan boundaries: snapped wall piece ends, or room edges if on outer wall
+      let scanMinX=snappedWP?snappedWP.x1:0, scanMaxX=snappedWP?snappedWP.x2:roomW;
+      let scanMinY=snappedWP?snappedWP.y1:0, scanMaxY=snappedWP?snappedWP.y2:roomH;
+
+      function nearestAlongWall(fromPos,direction,axis){
+        // Default to snapped wall piece end, not room edge
+        let nearest=direction>0?(axis==='x'?scanMaxX:scanMaxY):(axis==='x'?scanMinX:scanMinY);
+        // Check other wall pieces (excluding the snapped one)
+        for(let wp of wallPieces){
+          let b=wpBB(wp);
+          if(b===snappedWP)continue;
+          if(axis==='x'){
+            if(b.y1<=wc+5&&b.y2>=wc-5){
+              if(direction>0&&b.x1>fromPos+1&&b.x1<nearest) nearest=b.x1;
+              if(direction<0&&b.x2<fromPos-1&&b.x2>nearest) nearest=b.x2;
+            }
+          }else{
+            if(b.x1<=wc+5&&b.x2>=wc-5){
+              if(direction>0&&b.y1>fromPos+1&&b.y1<nearest) nearest=b.y1;
+              if(direction<0&&b.y2<fromPos-1&&b.y2>nearest) nearest=b.y2;
+            }
+          }
+        }
+        // Check corners
+        for(let c of corners){
+          if(!c.snapped)continue;
+          let geo=cornerGeometry(c);
+          let xs=geo.map(p=>p.x),ys=geo.map(p=>p.y);
+          let bx1=Math.min(...xs),bx2=Math.max(...xs),by1=Math.min(...ys),by2=Math.max(...ys);
+          if(axis==='x'){
+            if(by1<=wc+5&&by2>=wc-5){
+              if(direction>0&&bx1>fromPos+1&&bx1<nearest) nearest=bx1;
+              if(direction<0&&bx2<fromPos-1&&bx2>nearest) nearest=bx2;
+            }
+          }else{
+            if(bx1<=wc+5&&bx2>=wc-5){
+              if(direction>0&&by1>fromPos+1&&by1<nearest) nearest=by1;
+              if(direction<0&&by2<fromPos-1&&by2>nearest) nearest=by2;
+            }
+          }
+        }
+        for(let od of openings){
+          if(od===o||!od.snapped)continue;
+          let odAxis=od.snapAxis==='h'?'x':'y';
+          if(odAxis!==axis)continue;
+          if(Math.abs((od.snapCoord||0)-wc)>10)continue;
+          let odStart=od.pos-od.width/2,odEnd=od.pos+od.width/2;
+          if(direction>0&&odStart>fromPos+1&&odStart<nearest) nearest=odStart;
+          if(direction<0&&odEnd<fromPos-1&&odEnd>nearest) nearest=odEnd;
+        }
+        return nearest;
+      }
+
+      let axis=isH?'x':'y';
+      let leftEdge=nearestAlongWall(doorStart,-1,axis);
+      let rightEdge=nearestAlongWall(doorEnd,1,axis);
+      let gLeft=Math.round(doorStart-leftEdge);
+      let gRight=Math.round(rightEdge-doorEnd);
+
+      if(isH){
+        let a=toC(o.pos-o.width/2,wc),b=toC(o.pos+o.width/2,wc);
+        drawDimLine(a.x,a.y,b.x,b.y,fmtD(o.width),side,{type:'door-dim',opening:o,which:'width'},true);
+        let la=toC(leftEdge,wc),lb=toC(doorStart,wc);
+        drawDimLine(la.x,la.y,lb.x,lb.y,fmtD(gLeft),side,{type:'door-dim',opening:o,which:'left-gap',wallPieceX1:leftEdge},true);
+        let ra=toC(doorEnd,wc),rb=toC(rightEdge,wc);
+        drawDimLine(ra.x,ra.y,rb.x,rb.y,fmtD(gRight),side,{type:'door-dim',opening:o,which:'right-gap',wallPieceX2:rightEdge},true);
+      }else{
+        let a=toC(wc,o.pos-o.width/2),b=toC(wc,o.pos+o.width/2);
+        drawDimLine(a.x,a.y,b.x,b.y,fmtD(o.width),side,{type:'door-dim',opening:o,which:'width'},true);
+        let ta=toC(wc,leftEdge),tb=toC(wc,doorStart);
+        drawDimLine(ta.x,ta.y,tb.x,tb.y,fmtD(gLeft),side,{type:'door-dim',opening:o,which:'top-gap',wallPieceY1:leftEdge},true);
+        let ba=toC(wc,doorEnd),bb2=toC(wc,rightEdge);
+        drawDimLine(ba.x,ba.y,bb2.x,bb2.y,fmtD(gRight),side,{type:'door-dim',opening:o,which:'bottom-gap',wallPieceY2:rightEdge},true);
+      }
+    }
+  }
+}
+
+// ── Room labels ───────────────────────────────────────────────────────────
+const LABEL_SIZES={small:14,medium:20,large:28};
+function ptInLabel(mx,my,l){
+  let fs=LABEL_SIZES[l.size]||20;
+  let hw=l.text.length*fs*0.33,hh=fs*0.7;
+  return mx>=l.x-hw&&mx<=l.x+hw&&my>=l.y-hh&&my<=l.y+hh;
+}
+function drawRoomLabels(){
+  let dark=isDark();
+  for(let l of roomLabels){
+    let isSel=selectedItem===l;
+    let fs=LABEL_SIZES[l.size]||20;
+    let cp=toC(l.x,l.y);
+    ctx.font=`${Math.round(fs*scale)}px var(--font-sans)`;
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillStyle=isSel?(dark?'#1D9E75':'#0F6E56'):(dark?'rgba(200,200,200,0.7)':'rgba(60,60,60,0.55)');
+    ctx.fillText(l.text,cp.x,cp.y);
+    if(isSel){
+      let tw=ctx.measureText(l.text).width;
+      ctx.strokeStyle='#1D9E75';ctx.lineWidth=1;ctx.setLineDash([3,3]);
+      ctx.strokeRect(cp.x-tw/2-4,cp.y-fs*scale/2-4,tw+8,fs*scale+8);ctx.setLineDash([]);
+    }
+  }
+}
+
+// ── Export ─────────────────────────────────────────────────────────────────
+function exportPNG(){
+  // Render at 2x for crispness
+  let wt=WALL_T,pad=80;
+  let pw=(roomW+wt*2+pad*2),ph=(roomH+wt*2+pad*2);
+  let dpr=2;
+  let offC=document.createElement('canvas');offC.width=pw*dpr;offC.height=ph*dpr;
+  let octx=offC.getContext('2d');octx.scale(dpr,dpr);
+  let savedCtx=ctx,savedScale=scale,savedOX=offsetX,savedOY=offsetY;
+  // Temporarily redirect drawing
+  scale=1;offsetX=wt+pad;offsetY=wt+pad;
+  Object.defineProperty(window,'ctx',{value:octx,configurable:true,writable:true});
+  // eslint-disable-next-line no-global-assign
+  let origCtx=ctx;
+  // We re-use draw() by swapping ctx
+  let origCanvas=canvas;
+  offC.width=pw*dpr;offC.height=ph*dpr;
+  // Draw to off-screen canvas manually
+  renderToCtx(octx,pw,ph,1,wt+pad,wt+pad);
+  let a=document.createElement('a');a.download='room-plan.png';a.href=offC.toDataURL('image/png');a.click();
+  scale=savedScale;offsetX=savedOX;offsetY=savedOY;
+}
+function exportPDF(){
+  let wt=WALL_T,pad=80;
+  let pw=(roomW+wt*2+pad*2),ph=(roomH+wt*2+pad*2);
+  let dpr=2;
+  let offC=document.createElement('canvas');offC.width=pw*dpr;offC.height=ph*dpr;
+  let octx=offC.getContext('2d');octx.scale(dpr,dpr);
+  renderToCtx(octx,pw,ph,1,wt+pad,wt+pad);
+  let img=offC.toDataURL('image/png');
+  let win=window.open('','_blank');
+  let doc=win.document;
+  doc.write('<!DOCTYPE html><html><head><title>Room Plan</title><style>body{margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#f0f0f0;}img{max-width:100%;box-shadow:0 2px 12px rgba(0,0,0,0.15);}@media print{body{background:white;}img{max-width:100%;max-height:100vh;}}</style></head><body></body></html>');
+  doc.close();
+  let imgEl=doc.createElement('img');imgEl.src=img;doc.body.appendChild(imgEl);
+  setTimeout(()=>win.print(),300);
+}
+function renderToCtx(oc,pw,ph,sc,ox,oy){
+  // Save and override globals temporarily
+  let _ctx=ctx,_scale=scale,_offsetX=offsetX,_offsetY=offsetY,_canvas=canvas;
+  // Monkey-patch: replace module-level ctx,scale,offsetX,offsetY
+  // We do this by building a separate mini-draw that duplicates draw() with the right ctx
+  oc.clearRect(0,0,pw,ph);
+  oc.fillStyle='white';oc.fillRect(0,0,pw,ph);
+  let dark=false;
+  let r0={x:ox,y:oy},r1={x:ox+roomW*sc,y:oy+roomH*sc};
+  let wt=WALL_T*sc;
+  let gridC='rgba(0,0,0,0.05)',gridM='rgba(0,0,0,0.10)';
+  // Helpers
+  function toCE(mx,my){return{x:mx*sc+ox,y:my*sc+oy};}
+  // Outer wall
+  oc.fillStyle='rgba(80,80,80,0.15)';
+  oc.fillRect(r0.x-wt,r0.y-wt,wt,r1.y-r0.y+wt*2);
+  oc.fillRect(r1.x,r0.y-wt,wt,r1.y-r0.y+wt*2);
+  oc.fillRect(r0.x-wt,r0.y-wt,r1.x-r0.x+wt*2,wt);
+  oc.fillRect(r0.x-wt,r1.y,r1.x-r0.x+wt*2,wt);
+  oc.strokeStyle='rgba(60,60,60,0.35)';oc.lineWidth=1;oc.setLineDash([]);
+  oc.strokeRect(r0.x-wt,r0.y-wt,r1.x-r0.x+wt*2,r1.y-r0.y+wt*2);
+  // Interior
+  oc.fillStyle='rgba(255,255,255,0.95)';
+  oc.fillRect(r0.x,r0.y,r1.x-r0.x,r1.y-r0.y);
+  oc.strokeStyle='#185FA5';oc.lineWidth=2.5;oc.setLineDash([]);
+  oc.strokeRect(r0.x,r0.y,r1.x-r0.x,r1.y-r0.y);
+  // Grid
+  oc.save();oc.beginPath();oc.rect(r0.x,r0.y,r1.x-r0.x,r1.y-r0.y);oc.clip();
+  for(let x=0;x<=roomW;x+=100){let maj=x%1000===0;oc.strokeStyle=maj?gridM:gridC;oc.lineWidth=maj?0.8:0.5;let a=toCE(x,0),b=toCE(x,roomH);oc.beginPath();oc.moveTo(a.x,a.y);oc.lineTo(b.x,b.y);oc.stroke();}
+  for(let y=0;y<=roomH;y+=100){let maj=y%1000===0;oc.strokeStyle=maj?gridM:gridC;oc.lineWidth=maj?0.8:0.5;let a=toCE(0,y),b=toCE(roomW,y);oc.beginPath();oc.moveTo(a.x,a.y);oc.lineTo(b.x,b.y);oc.stroke();}
+  oc.restore();
+  // Room dims
+  let col='#185FA5';
+  let ox1=r0.x-wt,oy1=r0.y-wt,ox2=r1.x+wt,oy2=r1.y+wt;
+  let al=7;
+  let dimY2=oy1-DIM_OFFSET,dimX2=ox1-DIM_OFFSET;
+  oc.strokeStyle=col;oc.lineWidth=0.8;oc.setLineDash([3,3]);
+  oc.beginPath();oc.moveTo(ox1,oy1);oc.lineTo(ox1,dimY2-8);oc.stroke();
+  oc.beginPath();oc.moveTo(ox2,oy1);oc.lineTo(ox2,dimY2-8);oc.stroke();
+  oc.setLineDash([]);oc.beginPath();oc.moveTo(ox1,dimY2);oc.lineTo(ox2,dimY2);oc.stroke();
+  let lbl=fmtD(roomW);oc.font='11px sans-serif';let tw=oc.measureText(lbl).width+10,bh=18,mx2=(ox1+ox2)/2;
+  oc.fillStyle='rgba(255,255,255,0.93)';oc.beginPath();oc.roundRect(mx2-tw/2,dimY2-bh/2,tw,bh,4);oc.fill();
+  oc.strokeStyle=col;oc.stroke();oc.fillStyle=col;oc.textAlign='center';oc.textBaseline='middle';oc.fillText(lbl,mx2,dimY2);
+  let my3=(oy1+oy2)/2,lbl2=fmtD(roomH),tw2=oc.measureText(lbl2).width+10;
+  oc.strokeStyle=col;oc.lineWidth=0.8;oc.setLineDash([3,3]);
+  oc.beginPath();oc.moveTo(ox1,oy1);oc.lineTo(dimX2-8,oy1);oc.stroke();
+  oc.beginPath();oc.moveTo(ox1,oy2);oc.lineTo(dimX2-8,oy2);oc.stroke();
+  oc.setLineDash([]);oc.beginPath();oc.moveTo(dimX2,oy1);oc.lineTo(dimX2,oy2);oc.stroke();
+  oc.fillStyle='rgba(255,255,255,0.93)';oc.save();oc.translate(dimX2,my3);oc.rotate(-Math.PI/2);
+  oc.beginPath();oc.roundRect(-tw2/2,-bh/2,tw2,bh,4);oc.fill();oc.strokeStyle=col;oc.stroke();
+  oc.fillStyle=col;oc.textAlign='center';oc.textBaseline='middle';oc.fillText(lbl2,0,0);oc.restore();
+  // Wall pieces
+  for(let p of wallPieces){
+    let bb=wpBB(p);let c1=toCE(bb.x1,bb.y1),c2=toCE(bb.x2,bb.y2);
+    oc.beginPath();oc.rect(c1.x,c1.y,c2.x-c1.x,c2.y-c1.y);
+    oc.fillStyle='rgba(24,95,165,0.18)';oc.strokeStyle='#185FA5';oc.lineWidth=1.5;oc.setLineDash([]);oc.fill();oc.stroke();
+  }
+  // Openings
+  for(let o of openings){
+    let isH=(o.wall==='top'||o.wall==='bottom');
+    // White gap
+    let gx1,gy1,gx2,gy2;
+    if(o.wall==='top'){gx1=toCE(o.pos-o.width/2,0).x;gy1=toCE(0,-WALL_T).y;gx2=toCE(o.pos+o.width/2,0).x;gy2=toCE(0,0).y;}
+    else if(o.wall==='bottom'){gx1=toCE(o.pos-o.width/2,roomH).x;gy1=toCE(0,roomH).y;gx2=toCE(o.pos+o.width/2,roomH).x;gy2=toCE(0,roomH+WALL_T).y;}
+    else if(o.wall==='left'){gx1=toCE(-WALL_T,o.pos-o.width/2).x;gy1=toCE(0,o.pos-o.width/2).y;gx2=toCE(0,o.pos+o.width/2).x;gy2=toCE(0,o.pos+o.width/2).y;}
+    else{gx1=toCE(roomW,o.pos-o.width/2).x;gy1=toCE(0,o.pos-o.width/2).y;gx2=toCE(roomW+WALL_T,o.pos+o.width/2).x;gy2=toCE(0,o.pos+o.width/2).y;}
+    oc.fillStyle='white';oc.fillRect(gx1,gy1,gx2-gx1,gy2-gy1);
+    // Symbol
+    oc.strokeStyle='#333';oc.lineWidth=1.5;oc.setLineDash([]);
+    if(o.type==='door'){
+      if(isH){
+        let lx1=toCE(o.pos-o.width/2,0).x,lx2=toCE(o.pos+o.width/2,0).x;
+        let wy=o.wall==='top'?toCE(0,0).y:toCE(0,roomH).y;
+        let inner=o.wall==='top'?wy+WALL_T*sc:wy-WALL_T*sc;
+        oc.beginPath();oc.moveTo(lx1,wy);oc.lineTo(lx1,inner);oc.stroke();
+        oc.beginPath();oc.moveTo(lx2,wy);oc.lineTo(lx2,inner);oc.stroke();
+        oc.beginPath();oc.moveTo(lx1,inner);oc.lineTo(lx2,inner);oc.stroke();
+        let r=Math.abs(lx2-lx1);
+        oc.strokeStyle='rgba(0,0,0,0.3)';oc.setLineDash([3,3]);
+        oc.beginPath();
+        if(o.swing==='left')oc.arc(lx1,inner,r,0,Math.PI/2*(o.wall==='top'?-1:1));
+        else oc.arc(lx2,inner,r,Math.PI,Math.PI-Math.PI/2*(o.wall==='top'?-1:1));
+        oc.stroke();oc.setLineDash([]);
+      }else{
+        let ly1=toCE(0,o.pos-o.width/2).y,ly2=toCE(0,o.pos+o.width/2).y;
+        let wx=o.wall==='left'?toCE(0,0).x:toCE(roomW,0).x;
+        let inner=o.wall==='left'?wx+WALL_T*sc:wx-WALL_T*sc;
+        oc.beginPath();oc.moveTo(wx,ly1);oc.lineTo(inner,ly1);oc.stroke();
+        oc.beginPath();oc.moveTo(wx,ly2);oc.lineTo(inner,ly2);oc.stroke();
+        oc.beginPath();oc.moveTo(inner,ly1);oc.lineTo(inner,ly2);oc.stroke();
+        let r=Math.abs(ly2-ly1);
+        oc.strokeStyle='rgba(0,0,0,0.3)';oc.setLineDash([3,3]);
+        oc.beginPath();
+        if(o.swing==='left')oc.arc(inner,ly1,r,Math.PI/2,Math.PI*(o.wall==='left'?1:0));
+        else oc.arc(inner,ly2,r,-Math.PI/2,Math.PI*(o.wall==='left'?0:-1));
+        oc.stroke();oc.setLineDash([]);
+      }
+    }else{
+      oc.strokeStyle='#333';oc.lineWidth=1.5;oc.setLineDash([]);
+      if(isH){
+        let lx1=toCE(o.pos-o.width/2,0).x,lx2=toCE(o.pos+o.width/2,0).x;
+        let wy=o.wall==='top'?toCE(0,0).y:toCE(0,roomH).y;
+        let inner=o.wall==='top'?wy+WALL_T*sc:wy-WALL_T*sc;
+        let t1=wy+(inner-wy)*0.33,t2=wy+(inner-wy)*0.67;
+        oc.beginPath();oc.moveTo(lx1,t1);oc.lineTo(lx2,t1);oc.stroke();
+        oc.beginPath();oc.moveTo(lx1,t2);oc.lineTo(lx2,t2);oc.stroke();
+        oc.beginPath();oc.moveTo(lx1,wy);oc.lineTo(lx1,inner);oc.stroke();
+        oc.beginPath();oc.moveTo(lx2,wy);oc.lineTo(lx2,inner);oc.stroke();
+      }else{
+        let ly1=toCE(0,o.pos-o.width/2).y,ly2=toCE(0,o.pos+o.width/2).y;
+        let wx=o.wall==='left'?toCE(0,0).x:toCE(roomW,0).x;
+        let inner=o.wall==='left'?wx+WALL_T*sc:wx-WALL_T*sc;
+        let t1=wx+(inner-wx)*0.33,t2=wx+(inner-wx)*0.67;
+        oc.beginPath();oc.moveTo(t1,ly1);oc.lineTo(t1,ly2);oc.stroke();
+        oc.beginPath();oc.moveTo(t2,ly1);oc.lineTo(t2,ly2);oc.stroke();
+        oc.beginPath();oc.moveTo(wx,ly1);oc.lineTo(inner,ly1);oc.stroke();
+        oc.beginPath();oc.moveTo(wx,ly2);oc.lineTo(inner,ly2);oc.stroke();
+      }
+    }
+  }
+  // Corners
+  for(let c of corners){
+    let geo=cornerGeometry(c),cp=geo.map(p=>toCE(p.x,p.y));
+    oc.beginPath();oc.moveTo(cp[0].x,cp[0].y);oc.lineTo(cp[1].x,cp[1].y);oc.lineTo(cp[2].x,cp[2].y);oc.closePath();
+    oc.fillStyle='rgba(83,74,183,0.14)';oc.strokeStyle='#534AB7';oc.lineWidth=2;oc.setLineDash([]);oc.fill();oc.stroke();
+  }
+  // Drawn walls
+  for(let w of drawnWalls){
+    let p1c=toCE(w.x1,w.y1),p2c=toCE(w.x2,w.y2);
+    oc.strokeStyle='#185FA5';oc.lineWidth=3;oc.setLineDash([]);
+    oc.beginPath();oc.moveTo(p1c.x,p1c.y);oc.lineTo(p2c.x,p2c.y);oc.stroke();
+    oc.fillStyle='#185FA5';
+    oc.beginPath();oc.arc(p1c.x,p1c.y,5,0,Math.PI*2);oc.fill();
+    oc.beginPath();oc.arc(p2c.x,p2c.y,5,0,Math.PI*2);oc.fill();
+  }
+  // Labels
+  for(let l of roomLabels){
+    let fs=LABEL_SIZES[l.size]||20;
+    let cp=toCE(l.x,l.y);
+    oc.font=`${Math.round(fs)}px sans-serif`;
+    oc.textAlign='center';oc.textBaseline='middle';
+    oc.fillStyle='rgba(60,60,60,0.55)';
+    oc.fillText(l.text,cp.x,cp.y);
+  }
+}
+
+function setMode(m){
+  mode=m;drawStart=null;pendingDrawn=null;
+  document.getElementById('wall-confirm-panel').style.display='none';
+  document.getElementById('opening-place-panel').style.display=(m==='door'||m==='window')?'block':'none';
+  document.getElementById('label-place-panel').style.display=m==='label'?'block':'none';
+  if(m==='door'){document.getElementById('opening-place-title').textContent='Place door';document.getElementById('door-swing-row').style.display='block';}
+  if(m==='window'){document.getElementById('opening-place-title').textContent='Place window';document.getElementById('door-swing-row').style.display='none';}
+  document.querySelectorAll('#toolbar button').forEach(b=>b.classList.remove('active'));
+  let btn=document.getElementById('btn-'+m);if(btn)btn.classList.add('active');
+  canvas.style.cursor=(m==='wall'||m==='door'||m==='label')?'crosshair':'default';
+  let msgs={select:'Click or drag items on the canvas',wall:'Click a start point',door:'Click on a room wall to place the door',label:'Click inside the room to place the label'};
+  document.getElementById('status').textContent=msgs[m]||'';
+  draw();
+}
+function applyRoom(){
+  let w=parseMM(document.getElementById('room-w').value),h=parseMM(document.getElementById('room-h').value),ceil=parseMM(document.getElementById('room-ceil').value);
+  if(isNaN(w)||isNaN(h)||w<=0||h<=0){alert('Enter dimensions in mm');return;}
+  if(isNaN(ceil)||ceil<=0)ceil=2400;
+  roomW=w;roomH=h;roomCeil=ceil;drawnWalls=[];wallPieces=[];corners=[];openings=[];roomLabels=[];kitchenUnits=[];selectedItem=null;showSelected();fitView();
+}
+function resize(){canvas.width=wrap.clientWidth;canvas.height=wrap.clientHeight;draw();}
+function fitView(){
+  let wt=WALL_T,pw=wrap.clientWidth-160,ph=wrap.clientHeight-160;
+  scale=Math.min(pw/(roomW+wt*2),ph/(roomH+wt*2));
+  let totalW=(roomW+wt*2)*scale,totalH=(roomH+wt*2)*scale;
+  offsetX=(wrap.clientWidth-totalW)/2+wt*scale;
+  offsetY=(wrap.clientHeight-totalH)/2+wt*scale;
+  draw();
+}
+function zoomIn(){scale*=1.2;draw();}
+function zoomOut(){scale/=1.2;draw();}
+function saveHistory(){history.push(JSON.parse(JSON.stringify({drawnWalls,wallPieces,corners,openings,roomLabels,kitchenUnits,roomW,roomH,roomCeil})));}
+function undo(){
+  if(!history.length)return;let s=history.pop();
+  drawnWalls=s.drawnWalls;wallPieces=s.wallPieces;corners=s.corners;openings=s.openings||[];roomLabels=s.roomLabels||[];kitchenUnits=s.kitchenUnits||[];roomW=s.roomW;roomH=s.roomH;roomCeil=s.roomCeil||2400;
+  selectedItem=null;showSelected();draw();
+}
+function clearAll(){
+  if(!drawnWalls.length&&!wallPieces.length&&!corners.length&&!openings.length&&!roomLabels.length&&!kitchenUnits.length)return;
+  saveHistory();drawnWalls=[];wallPieces=[];corners=[];openings=[];roomLabels=[];kitchenUnits=[];selectedItem=null;showSelected();draw();
+}
+// ── Kitchen units ─────────────────────────────────────────────────────────
+// Kitchen unit dimensions (all mm):
+// BASE: carcass 560 deep, +20 door = 580 total footprint, 720 carcass on 150 plinth = 870 total
+// WALL: carcass 330 deep, +20 door = 350 total footprint, 720 tall (overhead — dashed)
+// TALL: carcass 560 deep, +20 door = 580 total footprint, 2100 tall
+// ISLAND: same as base but freestanding (no wall snap)
+
+const KU_SPECS={
+  base:{label:'Base unit',carcassDepth:560,doorDepth:20,carcassH:720,plinth:150,totalH:870,color:'#C08B3A',snapToWall:true},
+  wall:{label:'Wall unit', carcassDepth:330,doorDepth:20,carcassH:720,plinth:0,  totalH:720,color:'#5A8EC0',snapToWall:true,overhead:true},
+  tall:{label:'Tall unit', carcassDepth:560,doorDepth:20,carcassH:2100,plinth:0, totalH:2100,color:'#7A6FC0',snapToWall:true},
+  island:{label:'Island',  carcassDepth:560,doorDepth:20,carcassH:720,plinth:150,totalH:870,color:'#3A9E6E',snapToWall:false},
+};
+
+let kitchenUnits=[];
+
+// Update depth hint when type changes
+document.getElementById('ku-type').addEventListener('change',()=>{
+  let spec=KU_SPECS[document.getElementById('ku-type').value];
+  document.getElementById('ku-depth-display').textContent=spec.carcassDepth+'mm carcass + '+spec.doorDepth+'mm door';
+});
+
+function toggleKitchenPanel(){
+  let p=document.getElementById('kitchen-panel');
+  let visible=p.style.display!=='none';
+  // Hide other panels
+  document.getElementById('opening-place-panel').style.display='none';
+  document.getElementById('label-place-panel').style.display='none';
+  p.style.display=visible?'none':'block';
+  document.querySelectorAll('#toolbar button').forEach(b=>b.classList.remove('active'));
+  if(!visible)document.getElementById('btn-kitchen').classList.add('active');
+}
+
+function addKitchenUnit(){
+  let type=document.getElementById('ku-type').value;
+  let width=parseInt(document.getElementById('ku-width').value)||600;
+  let spec=KU_SPECS[type];
+  let totalDepth=spec.carcassDepth+spec.doorDepth;
+  let ku={
+    type:'kitchen',kuType:type,
+    width,depth:totalDepth,carcassDepth:spec.carcassDepth,doorDepth:spec.doorDepth,
+    totalH:spec.totalH,carcassH:spec.carcassH,plinth:spec.plinth,
+    label:spec.label,overhead:spec.overhead||false,
+    cx:roomW/2,cy:roomH/2,
+    horiz:true,
+    snapped:false,snappedFace:null,anchorWallCoord:null,
+    spawnX:roomW/2,spawnY:roomH/2,locked:false,
+  };
+  saveHistory();kitchenUnits.push(ku);selectedItem=ku;setMode('select');showSelected();draw();
+  document.getElementById('status').textContent='Drag to a wall to snap the unit';
+}
+
+function kuBB(ku){
+  // horiz=true: unit spans along X (width=ku.width), Y span=ku.depth
+  // horiz=false: unit spans along Y (width=ku.width), X span=ku.depth
+  let hw=ku.horiz?ku.width/2:ku.depth/2;
+  let hd=ku.horiz?ku.depth/2:ku.width/2;
+  return{x1:ku.cx-hw,y1:ku.cy-hd,x2:ku.cx+hw,y2:ku.cy+hd};
+}
+
+function clampKuToRoom(ku){
+  let bb=kuBB(ku);
+  let hw=ku.horiz?ku.width/2:ku.depth/2;
+  let hd=ku.horiz?ku.depth/2:ku.width/2;
+  ku.cx=clamp(ku.cx,hw,roomW-hw);
+  ku.cy=clamp(ku.cy,hd,roomH-hd);
+}
+
+function anchorKU(ku){
+  if(!ku.snappedFace)return;
+  let halfY=ku.horiz?ku.depth/2:ku.width/2;
+  let halfX=ku.horiz?ku.width/2:ku.depth/2;
+  if(ku.snappedFace==='top')    ku.cy=ku.anchorWallCoord+halfY;
+  else if(ku.snappedFace==='bottom') ku.cy=ku.anchorWallCoord-halfY;
+  else if(ku.snappedFace==='left')   ku.cx=ku.anchorWallCoord+halfX;
+  else if(ku.snappedFace==='right')  ku.cx=ku.anchorWallCoord-halfX;
+  clampKuToRoom(ku);
+}
+
+function snapKU(ku,excludeIdx){
+  if(!ku.kuType||KU_SPECS[ku.kuType].snapToWall===false){
+    clampKuToRoom(ku);ku.snapped=false;ku.snappedFace=null;return;
+  }
+  let edges=allSnapEdges(-1);
+  let THRESH=300,best=THRESH,bestSnap=null;
+  // Use current horiz to measure the depth dimension for snap distance
+  let depthH=ku.horiz?ku.depth/2:ku.width/2; // half-depth in Y when horiz
+  let depthV=ku.horiz?ku.width/2:ku.depth/2; // half-depth in X when horiz... wait
+  // Simpler: just check both orientations and pick the closest snap overall
+  for(let e of edges){
+    if(e.type==='h'){
+      // Snapping to top/bottom wall → unit runs along X (horiz=true), depth is Y
+      let hd=ku.depth/2;
+      let dTop=Math.abs(ku.cy-hd-e.coord);
+      let dBot=Math.abs(ku.cy+hd-e.coord);
+      if(dTop<best){best=dTop;bestSnap={e,face:'top',  horiz:true, coord:e.coord};}
+      if(dBot<best){best=dBot;bestSnap={e,face:'bottom',horiz:true, coord:e.coord};}
+    }else{
+      // Snapping to left/right wall → unit runs along Y (horiz=false), depth is X
+      let hd=ku.depth/2;
+      let dLft=Math.abs(ku.cx-hd-e.coord);
+      let dRgt=Math.abs(ku.cx+hd-e.coord);
+      if(dLft<best){best=dLft;bestSnap={e,face:'left', horiz:false,coord:e.coord};}
+      if(dRgt<best){best=dRgt;bestSnap={e,face:'right',horiz:false,coord:e.coord};}
+    }
+  }
+  if(bestSnap){
+    ku.horiz=bestSnap.horiz;
+    ku.snappedFace=bestSnap.face;
+    ku.anchorWallCoord=bestSnap.coord;
+    ku.snapped=true;
+    anchorKU(ku);
+  }else{
+    ku.snapped=false;ku.snappedFace=null;
+    clampKuToRoom(ku);
+  }
+}
+
+function releaseSnapKU(ku,idx){
+  snapKU(ku,idx);
+}
+
+function drawKitchenUnits(){
+  let dark=isDark();
+  for(let i=0;i<kitchenUnits.length;i++){
+    let ku=kitchenUnits[i];
+    let isSel=selectedItem===ku,isDrag=dragging===ku;
+    let spec=KU_SPECS[ku.kuType];
+    let bb=kuBB(ku);
+    let c1=toC(bb.x1,bb.y1),c2=toC(bb.x2,bb.y2);
+    let W=c2.x-c1.x,H=c2.y-c1.y;
+    let col=spec.color;
+
+    ctx.save();
+
+    if(ku.overhead){
+      // Wall units: dashed lighter outline
+      ctx.strokeStyle=dark?col+'aa':col+'99';
+      ctx.lineWidth=isSel?2:1.5;
+      ctx.setLineDash([5,4]);
+      ctx.fillStyle=dark?col+'18':col+'12';
+    }else{
+      ctx.strokeStyle=isDrag?(ku.snapped?'#1D9E75':'#D85A30'):isSel?'#1D9E75':col;
+      ctx.lineWidth=isSel?2.5:1.5;
+      ctx.setLineDash([]);
+      ctx.fillStyle=isDrag?(ku.snapped?(dark?'rgba(29,158,117,0.18)':'rgba(29,158,117,0.12)'):(dark?'rgba(211,90,48,0.16)':'rgba(211,90,48,0.10)'))
+        :isSel?(dark?col+'30':col+'20'):(dark?col+'28':col+'18');
+    }
+
+    ctx.beginPath();ctx.rect(c1.x,c1.y,W,H);ctx.fill();ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Door line: thin line indicating door face (opposite to wall)
+    if(!isDrag&&ku.snapped&&ku.snappedFace){
+      let doorDepthPx=ku.doorDepth*scale;
+      ctx.strokeStyle=ku.overhead?(dark?col+'88':col+'66'):isSel?'#1D9E75':(dark?col+'cc':col+'bb');
+      ctx.lineWidth=1;ctx.setLineDash([]);
+      if(ku.snappedFace==='top'){
+        let fy=c1.y+H-doorDepthPx;
+        ctx.beginPath();ctx.moveTo(c1.x,fy);ctx.lineTo(c2.x,fy);ctx.stroke();
+      }else if(ku.snappedFace==='bottom'){
+        let fy=c1.y+doorDepthPx;
+        ctx.beginPath();ctx.moveTo(c1.x,fy);ctx.lineTo(c2.x,fy);ctx.stroke();
+      }else if(ku.snappedFace==='left'){
+        let fx=c1.x+W-doorDepthPx;
+        ctx.beginPath();ctx.moveTo(fx,c1.y);ctx.lineTo(fx,c2.y);ctx.stroke();
+      }else if(ku.snappedFace==='right'){
+        let fx=c1.x+doorDepthPx;
+        ctx.beginPath();ctx.moveTo(fx,c1.y);ctx.lineTo(fx,c2.y);ctx.stroke();
+      }
+    }
+
+    // Label inside unit
+    if(!isDrag){
+      let fs=Math.max(8,Math.min(11,Math.min(W,H)*0.18));
+      ctx.font=`${fs}px var(--font-sans)`;
+      ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillStyle=ku.overhead?(dark?col+'bb':col+'99'):(dark?col+'ee':col+'cc');
+      let mx=(c1.x+c2.x)/2,my=(c1.y+c2.y)/2;
+      let typeLabel=spec.label.replace(' unit','');
+      // Only draw label if there's space
+      if(W>30&&H>14){
+        ctx.fillText(typeLabel,mx,my-(H>28?6:0));
+        if(H>28){ctx.font=`${Math.max(7,fs-1)}px var(--font-sans)`;ctx.fillText(ku.width+'mm',mx,my+7);}
+      }
+    }
+
+    ctx.restore();
+
+    // Position dims when selected & snapped & not dragging
+    if(isSel&&!isDrag&&ku.snapped){
+      drawKUPositionDims(ku,bb);
+    }
+  }
+}
+
+function kuNearestObjects(ku,bb){
+  // Returns nearest object edge in each direction along the wall the unit is snapped to.
+  // For top/bottom snapped units: find nearest edges LEFT and RIGHT of the unit along X.
+  // For left/right snapped units: find nearest edges ABOVE and BELOW along Y.
+  // Objects = room walls + other kitchen units + wall pieces + openings (doors/windows).
+
+  let face=ku.snappedFace;
+  let alongH=(face==='top'||face==='bottom'); // unit runs along X axis
+
+  // Collect all obstacle intervals along the wall axis
+  // Each obstacle contributes a "near edge" and "far edge" in the along-axis coordinate
+  let obstacles=[];
+
+  // Room walls (the two ends of the wall this unit is on)
+  if(alongH){
+    obstacles.push({lo:0,       hi:0,       label:'wall'});
+    obstacles.push({lo:roomW,   hi:roomW,   label:'wall'});
+  }else{
+    obstacles.push({lo:0,       hi:0,       label:'wall'});
+    obstacles.push({lo:roomH,   hi:roomH,   label:'wall'});
+  }
+
+  // Other kitchen units snapped to the same face
+  for(let other of kitchenUnits){
+    if(other===ku||!other.snapped||other.snappedFace!==face)continue;
+    let ob=kuBB(other);
+    if(alongH) obstacles.push({lo:ob.x1,hi:ob.x2,label:'unit'});
+    else        obstacles.push({lo:ob.y1,hi:ob.y2,label:'unit'});
+  }
+
+  // Wall pieces snapped to the same wall
+  for(let wp of wallPieces){
+    if(!wp.snapped)continue;
+    let wb=wpBB(wp);
+    if(alongH) obstacles.push({lo:wb.x1,hi:wb.x2,label:'wall'});
+    else        obstacles.push({lo:wb.y1,hi:wb.y2,label:'wall'});
+  }
+
+  // Openings (doors/windows) on the same wall
+  for(let op of openings){
+    if(!op.snapped)continue;
+    let ob=openingBB(op);
+    if(alongH) obstacles.push({lo:ob.x1,hi:ob.x2,label:'opening'});
+    else        obstacles.push({lo:ob.y1,hi:ob.y2,label:'opening'});
+  }
+
+  // Find nearest obstacle edge to the LEFT/ABOVE (lo side) and RIGHT/BELOW (hi side)
+  let unitLo=alongH?bb.x1:bb.y1;
+  let unitHi=alongH?bb.x2:bb.y2;
+
+  let nearLo=null,nearLoD=Infinity; // nearest edge at or before unitLo
+  let nearHi=null,nearHiD=Infinity; // nearest edge at or after unitHi
+
+  for(let ob of obstacles){
+    // Edges to the lo side
+    if(ob.hi<=unitLo){let d=unitLo-ob.hi;if(d<nearLoD){nearLoD=d;nearLo=ob.hi;}}
+    if(ob.lo<=unitLo&&ob.lo>=0){let d=unitLo-ob.lo;if(d<nearLoD){nearLoD=d;nearLo=ob.lo;}}
+    // Edges to the hi side
+    if(ob.lo>=unitHi){let d=ob.lo-unitHi;if(d<nearHiD){nearHiD=d;nearHi=ob.lo;}}
+    if(ob.hi>=unitHi){let d=ob.hi-unitHi;if(d<nearHiD){nearHiD=d;nearHi=ob.hi;}}
+  }
+
+  return{
+    nearLo:nearLo??0, gapLo:Math.round(unitLo-(nearLo??0)),
+    nearHi:nearHi??(alongH?roomW:roomH), gapHi:Math.round((nearHi??(alongH?roomW:roomH))-unitHi),
+    alongH
+  };
+}
+
+function drawKUPositionDims(ku,bb){
+  let{nearLo,gapLo,nearHi,gapHi,alongH}=kuNearestObjects(ku,bb);
+  let face=ku.snappedFace;
+
+  // Position the dim line offset outside the unit (away from the wall)
+  // For top-snapped: dims go above (lower Y in canvas = higher on screen)
+  // For bottom-snapped: dims go below
+  // For left-snapped: dims go left
+  // For right-snapped: dims go right
+  let dimOffset=18; // px offset from unit edge for the dim line
+
+  if(alongH){
+    // Dim line runs along Y = mid of unit in canvas coords
+    let cy=(toC(0,bb.y1).y+toC(0,bb.y2).y)/2;
+    let loX=toC(nearLo,0).x, unitLoX=toC(bb.x1,0).x;
+    let hiX=toC(nearHi,0).x, unitHiX=toC(bb.x2,0).x;
+
+    if(gapLo>=0)
+      drawDimLine(loX,cy,unitLoX,cy,fmtD(gapLo),0,
+        {type:'ku_gap',ku,side:'lo',alongH:true},true);
+    if(gapHi>=0)
+      drawDimLine(unitHiX,cy,hiX,cy,fmtD(gapHi),0,
+        {type:'ku_gap',ku,side:'hi',alongH:true},true);
+  }else{
+    // Dim line runs along X = mid of unit
+    let cx=(toC(bb.x1,0).x+toC(bb.x2,0).x)/2;
+    let loY=toC(0,nearLo).y, unitLoY=toC(0,bb.y1).y;
+    let hiY=toC(0,nearHi).y, unitHiY=toC(0,bb.y2).y;
+
+    if(gapLo>=0)
+      drawDimLine(cx,loY,cx,unitLoY,fmtD(gapLo),0,
+        {type:'ku_gap',ku,side:'lo',alongH:false},true);
+    if(gapHi>=0)
+      drawDimLine(cx,unitHiY,cx,hiY,fmtD(gapHi),0,
+        {type:'ku_gap',ku,side:'hi',alongH:false},true);
+  }
+}
+
+function ptInKU(mx,my,ku){
+  let bb=kuBB(ku);
+  return mx>=bb.x1&&mx<=bb.x2&&my>=bb.y1&&my<=bb.y2;
+}
+
+// ── Save / Load ───────────────────────────────────────────────────────────
+function saveRoom(){
+  let data={
+    version:1,
+    roomW,roomH,roomCeil,
+    drawnWalls,wallPieces,corners,openings,roomLabels,kitchenUnits
+  };
+  let json=JSON.stringify(data,null,2);
+  let blob=new Blob([json],{type:'application/json'});
+  let a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  // Suggest a filename based on room size
+  a.download=`room_${roomW}x${roomH}.room.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  document.getElementById('status').textContent='Room saved';
+}
+function loadRoom(input){
+  let file=input.files[0];if(!file)return;
+  let reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      let data=JSON.parse(e.target.result);
+      if(!data.roomW||!data.roomH){alert('Not a valid room file');return;}
+      saveHistory();
+      roomW=data.roomW;roomH=data.roomH;roomCeil=data.roomCeil||2400;
+      drawnWalls=data.drawnWalls||[];
+      wallPieces=data.wallPieces||[];
+      corners=data.corners||[];
+      openings=data.openings||[];
+      roomLabels=data.roomLabels||[];
+      kitchenUnits=data.kitchenUnits||[];
+      // Sync sidebar inputs
+      document.getElementById('room-w').value=roomW;
+      document.getElementById('room-h').value=roomH;
+      document.getElementById('room-ceil').value=roomCeil;
+      selectedItem=null;showSelected();fitView();
+      document.getElementById('status').textContent='Room loaded: '+file.name;
+    }catch(err){alert('Could not read file: '+err.message);}
+  };
+  reader.readAsText(file);
+  input.value=''; // reset so same file can be loaded again
+}
+
+window.addEventListener('resize',resize);
+resize();fitView();
+</script>
