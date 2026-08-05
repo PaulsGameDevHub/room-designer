@@ -323,6 +323,9 @@ let selectedItem = null, dragging = null, dragOffX = 0, dragOffY = 0;
 let drawStart = null, pendingDrawn = null, mousePos = {x:0, y:0};
 let dimHitAreas = [], activeDim = null;
 let panning = false, panStart = null, spaceDown = false;
+// True once the user zooms or pans, which stops a resize from re-fitting and
+// throwing away where they were looking.
+let userAdjustedView = false;
 let past = [], future = [];
 let drawQueued = false, autosaveTimer = null, suppressAutosave = false;
 
@@ -1147,9 +1150,13 @@ function requestDraw(){
   requestAnimationFrame(() => { drawQueued = false; draw(); });
 }
 
+// Returns false when there is nothing to draw into yet — a hidden tab or a
+// collapsed container reports a zero-size element, and sizing a canvas to 0
+// would throw away the drawing surface.
 function resize(){
   const dpr = window.devicePixelRatio || 1;
   const w = wrap.clientWidth, h = wrap.clientHeight;
+  if(w < 2 || h < 2) return false;
   canvas.width = Math.round(w*dpr);
   canvas.height = Math.round(h*dpr);
   canvas.style.width = w+'px';
@@ -1157,6 +1164,7 @@ function resize(){
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   viewW = w; viewH = h;
   draw();
+  return true;
 }
 const cw = () => viewW;
 const ch = () => viewH;
@@ -2329,6 +2337,7 @@ function syncRoomInputs(){
 }
 
 function fitView(){
+  userAdjustedView = false;
   const padPx = 90;
   const availW = Math.max(50, cw() - padPx*2), availH = Math.max(50, ch() - padPx*2);
   if(view === 'elev'){
@@ -2353,6 +2362,7 @@ function zoomBy(factor, anchorX, anchorY){
   offsetX = ax - (ax-offsetX)*(newScale/scale);
   offsetY = ay - (ay-offsetY)*(newScale/scale);
   scale = newScale;
+  userAdjustedView = true;
   requestDraw();
 }
 
@@ -2473,6 +2483,7 @@ canvas.addEventListener('pointermove', e => {
   if(panning && panStart){
     offsetX = panStart.ox + (cx-panStart.x);
     offsetY = panStart.oy + (cy-panStart.y);
+    userAdjustedView = true;
     requestDraw();
     return;
   }
@@ -3991,23 +4002,36 @@ window.addEventListener('beforeunload', () => { clearTimeout(autosaveTimer); wri
 initDropdowns();
 updateHistoryButtons();
 
-// The canvas needs its real size before anything is measured or fitted.
+// The container can start with no size at all — a background tab, a collapsed
+// pane, an iframe that has not been laid out. Nothing can be measured or fitted
+// until it does, so the view stays unfitted and re-fits on the first real size.
+let everFitted = false;
+
+function relayout(){
+  if(!resize()) return;                 // still zero-sized, try again later
+  if(!everFitted || !userAdjustedView){
+    fitView();
+    everFitted = true;
+  }
+}
+
 const ro = new ResizeObserver(() => {
   const dpr = window.devicePixelRatio || 1;
-  if(canvas.width !== Math.round(wrap.clientWidth*dpr) || canvas.height !== Math.round(wrap.clientHeight*dpr)){
-    const wasDefault = Math.abs(scale) < 1e-9;
-    resize();
-    if(wasDefault) fitView();
+  if(canvas.width !== Math.round(wrap.clientWidth*dpr) ||
+     canvas.height !== Math.round(wrap.clientHeight*dpr)){
+    relayout();
   }
 });
 ro.observe(wrap);
-window.addEventListener('resize', resize);
+window.addEventListener('resize', relayout);
+// ResizeObserver callbacks are part of the rendering steps, so a document that
+// is not being rendered never receives them. Catch up when it becomes visible.
+document.addEventListener('visibilitychange', () => { if(!document.hidden) relayout(); });
 
-resize();
 if(!restoreAutosave()) status('Set the inside room size, then start placing items');
 syncRoomInputs();
 showSelected();
-fitView();
+relayout();
 </script>
 </body>
 </html>
