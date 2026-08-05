@@ -26,7 +26,11 @@ wall. Click any dimension label to type an exact value — gaps perpendicular to
 wall resize the piece, gaps along the wall slide it.
 
 **Angled corners** are right-angled triangles with a rotatable anchor. Dimensions show
-the gap from each leg tip to the next surface beyond it.
+the gap from each leg tip to the next surface beyond it. They are treated as solid:
+wall pieces, kitchen units and furniture all stop flush against a splay rather than
+sliding through it, and gap dimensions measure to the splay. Note that boxes stay
+axis-aligned — they stop *at* an angled face, they do not lie *along* it. Only doors
+can follow a hypotenuse.
 
 **Doors and windows** spawn floating in the middle of the room and snap when dragged to
 a wall — including to the hypotenuse of an angled corner. Doors draw a leaf and a
@@ -129,3 +133,14 @@ Fixed on the way to this version:
   lines individually. Frames are now batched to `requestAnimationFrame`, the grid is
   batched into two paths and dropped entirely when it would be sub-pixel, and the canvas
   is `devicePixelRatio`-aware instead of blurry.
+- Angled corners were not solid. A triangle cannot be expressed as a snap edge and
+  snapping only ever considered axis-aligned surfaces, so units, furniture and wall
+  pieces slid straight through a splay — a 600mm base unit overlapped one by
+  149,000mm². Snapping now evaluates candidate walls nearest-first and rejects any that
+  would leave the item buried, which also fixed a dead spot where an item snapped to an
+  internal wall piece's face, landed inside the splay, and could not escape because a
+  wall-snapped item may only slide along its own wall.
+- The view never recovered if the canvas container was first laid out at zero size
+  (background tab, collapsed pane, un-laid-out iframe): the re-fit guard only triggered
+  when `scale` was exactly `0`, which it never was, and `ResizeObserver` callbacks are
+  part of the rendering steps so a non-rendered document never receives them.

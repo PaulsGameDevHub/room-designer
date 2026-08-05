@@ -125,7 +125,8 @@ const exposed = `
   deleteSelected, undo, redo, pushHistory, snapshot, applySnapshot,
   computeSchedule, wallChain, elevItems, elevInfo, setView, fitView, drawPlan, drawElevation,
   planPage, schedulePage, buildPdf, roomData, boxes, boxBB, snapBox, snapDoor, wpBB,
-  boxNearestObjects, cornerShadow, slideClearOfCorners, clipToSlab, cornerOverlapArea,
+  boxNearestObjects, cornerShadow, clipToSlab, cornerOverlapArea,
+  slideBoxClear, slidePieceClear, settlePiece, settleBox, clearOfCorners, firstSnap, reSnap,
   releaseSnap, cornerGeometry, refreshSchedule, showSelected, applyRoom, setBoxRot,
   writeAutosave, restoreAutosave, exportPDF, exportPNG, saveRoom, textWidthPt,
   KU_SPECS, FURN_SPECS,
@@ -325,6 +326,90 @@ check('an unsnapped free-standing item is also kept out', () => {
 check('clipToSlab handles a triangle wholly outside the slab', () => {
   const tri = [{x:0,y:0},{x:100,y:0},{x:0,y:100}];
   return api.clipToSlab(tri, 'x', 500, 600).length === 0;
+});
+
+check('a wall piece never penetrates an angled wall either', () => {
+  const c = api.corners[0];
+  api.addWallPiece();
+  const p = api.wallPieces[api.wallPieces.length-1];
+  p.len = 1000; p.thick = 100;
+
+  let worst = 0, worstAt = null, snapCount = 0;
+  for(let y = 1000; y <= 3400; y += 25){
+    // Drive it in as a fresh piece each time, so orientation is chosen afresh.
+    p.orientationLocked = false;
+    p.snapped = false;
+    p.horiz = false;
+    p.cx = 300; p.cy = y;
+    api.releaseSnap(p, api.wallPieces.indexOf(p));
+    if(p.snapped) snapCount++;
+    const area = api.cornerOverlapArea(api.wpBB(p), c);
+    if(area > worst){ worst = area; worstAt = y; }
+  }
+  api.selectedItem = p;
+  api.deleteSelected();
+  return worst < 1
+    ? `97 positions swept, max penetration ${worst.toFixed(1)}mm2, snapped at ${snapCount}`
+    : `penetrated ${worst.toFixed(0)}mm2 at cursor y=${worstAt}`;
+});
+
+check('growing a wall piece into a splay pushes it back out', () => {
+  const c = api.corners[0];
+  api.addWallPiece();
+  const p = api.wallPieces[api.wallPieces.length-1];
+  p.len = 400; p.thick = 100;
+  p.orientationLocked = false;
+  p.cx = 300; p.cy = 1600;
+  api.releaseSnap(p, api.wallPieces.indexOf(p));
+  const before = api.wpBB(p);
+  // It lands against the left wall lying horizontally, so its Y extent is its
+  // thickness. Grow whichever dimension actually reaches toward the splay at
+  // y 1900..2400 — growing the other one would prove nothing.
+  const beforeY = before.y2 - before.y1;
+  p[p.horiz ? 'thick' : 'len'] = 900;
+  api.settlePiece(p);
+  const after = api.wpBB(p);
+  const afterY = after.y2 - after.y1;
+  const area = api.cornerOverlapArea(after, c);
+  api.selectedItem = p;
+  api.deleteSelected();
+  if(afterY <= beforeY) return `test failed to grow the Y extent (${beforeY} -> ${afterY})`;
+  return area < 1
+    ? `Y extent ${beforeY}->${afterY}mm, settled at y ${Math.round(after.y1)}..${Math.round(after.y2)}, clear of the splay`
+    : `overlapping by ${area.toFixed(0)}mm2 after growing`;
+});
+
+check('a piece with nowhere valid to snap is left free rather than buried', () => {
+  const c = api.corners[0];
+  api.addWallPiece();
+  const p = api.wallPieces[api.wallPieces.length-1];
+  // Long enough that it cannot fit beside the splay on the left wall.
+  p.len = 300; p.thick = 100;
+  p.orientationLocked = false;
+  p.cx = 150; p.cy = 2150;      // dead centre of the splay
+  api.releaseSnap(p, api.wallPieces.indexOf(p));
+  const area = api.cornerOverlapArea(api.wpBB(p), c);
+  const state = p.snapped ? 'snapped to ' + p.snappedFace : 'left free-standing';
+  api.selectedItem = p;
+  api.deleteSelected();
+  return area < 1 ? `${state}, clear of the splay` : `buried by ${area.toFixed(0)}mm2`;
+});
+
+check('straight-wall snapping is unchanged when no corner is involved', () => {
+  // Same assertion as the earlier wall-piece test, but with a splay present at
+  // the far end of the room, to prove candidate ordering still picks nearest.
+  api.addWallPiece();
+  const p = api.wallPieces[api.wallPieces.length-1];
+  p.len = 1000; p.thick = 100;
+  p.orientationLocked = false;
+  p.cx = 6000; p.cy = 500;
+  api.releaseSnap(p, api.wallPieces.indexOf(p));
+  const bb = api.wpBB(p);
+  const ok = p.snapped && p.snappedFace === 'top' && Math.abs(bb.y1) < 0.001;
+  api.selectedItem = p;
+  api.deleteSelected();
+  return ok ? 'still snaps to the nearest wall, top edge at y=0'
+            : `snapped=${p.snapped} face=${p.snappedFace} y1=${bb.y1}`;
 });
 
 // Undo behaviour: the historic off-by-one bug.

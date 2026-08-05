@@ -405,62 +405,63 @@ function allSnapEdges(excludeIdx){
 // First snap also chooses the orientation: a piece meeting a horizontal wall
 // stands vertically, one meeting a vertical wall lies horizontally.
 function firstSnap(p, excludeIdx){
-  let best = SNAP_MM, bestSnap = null;
+  const candidates = [];
   for(const e of allSnapEdges(excludeIdx)){
     if(e.type === 'h'){
-      let d = Math.abs((p.cy - p.len/2) - e.coord);
-      if(d < best){ best = d; bestSnap = {e, face:'top', horiz:false}; }
-      d = Math.abs((p.cy + p.len/2) - e.coord);
-      if(d < best){ best = d; bestSnap = {e, face:'bottom', horiz:false}; }
+      candidates.push({d:Math.abs((p.cy - p.len/2) - e.coord), e, face:'top',    horiz:false});
+      candidates.push({d:Math.abs((p.cy + p.len/2) - e.coord), e, face:'bottom', horiz:false});
     }else{
-      let d = Math.abs((p.cx - p.len/2) - e.coord);
-      if(d < best){ best = d; bestSnap = {e, face:'left', horiz:true}; }
-      d = Math.abs((p.cx + p.len/2) - e.coord);
-      if(d < best){ best = d; bestSnap = {e, face:'right', horiz:true}; }
+      candidates.push({d:Math.abs((p.cx - p.len/2) - e.coord), e, face:'left',  horiz:true});
+      candidates.push({d:Math.abs((p.cx + p.len/2) - e.coord), e, face:'right', horiz:true});
     }
   }
-  if(bestSnap){
-    p.horiz = bestSnap.horiz;
-    p.snappedFace = bestSnap.face;
-    p.anchorWallCoord = bestSnap.e.coord;
-    p.snappedEdge = bestSnap.e.id;
-    p.snapped = true;
-    p.orientationLocked = true;
-    anchorPiece(p);
-  }else{
-    p.snapped = false;
-    p.snappedEdge = null;
-  }
+  applyPieceSnap(p, candidates, true);
 }
 
 // Later snaps keep the orientation but may move to any of the four walls.
 function reSnap(p, excludeIdx){
-  let best = SNAP_MM, bestSnap = null;
+  const candidates = [];
   for(const e of allSnapEdges(excludeIdx)){
     if(e.type === 'h'){
       const half = p.horiz ? p.thick/2 : p.len/2;
-      const dTop = Math.abs(p.cy - half - e.coord);
-      const dBot = Math.abs(p.cy + half - e.coord);
-      if(dTop < best){ best = dTop; bestSnap = {e, face:'top'}; }
-      if(dBot < best){ best = dBot; bestSnap = {e, face:'bottom'}; }
+      candidates.push({d:Math.abs(p.cy - half - e.coord), e, face:'top',    horiz:p.horiz});
+      candidates.push({d:Math.abs(p.cy + half - e.coord), e, face:'bottom', horiz:p.horiz});
     }else{
       const half = p.horiz ? p.len/2 : p.thick/2;
-      const dLft = Math.abs(p.cx - half - e.coord);
-      const dRgt = Math.abs(p.cx + half - e.coord);
-      if(dLft < best){ best = dLft; bestSnap = {e, face:'left'}; }
-      if(dRgt < best){ best = dRgt; bestSnap = {e, face:'right'}; }
+      candidates.push({d:Math.abs(p.cx - half - e.coord), e, face:'left',  horiz:p.horiz});
+      candidates.push({d:Math.abs(p.cx + half - e.coord), e, face:'right', horiz:p.horiz});
     }
   }
-  if(bestSnap){
-    p.anchorWallCoord = bestSnap.e.coord;
-    p.snappedFace = bestSnap.face;
-    p.snappedEdge = bestSnap.e.id;
+  applyPieceSnap(p, candidates, false);
+}
+
+// Take the nearest candidate wall that does not leave the piece buried in an
+// angled corner. With no corners about, the first candidate always wins, which
+// is exactly the plain nearest-edge behaviour.
+function applyPieceSnap(p, candidates, lockOrientation){
+  const startX = p.cx, startY = p.cy, startHoriz = p.horiz;
+  candidates.sort((a,b) => a.d - b.d);
+
+  for(const cand of candidates){
+    if(cand.d >= SNAP_MM) break;
+    p.cx = startX; p.cy = startY;
+    p.horiz = cand.horiz;
+    p.snappedFace = cand.face;
+    p.anchorWallCoord = cand.e.coord;
+    p.snappedEdge = cand.e.id;
     p.snapped = true;
+    if(lockOrientation) p.orientationLocked = true;
     anchorPiece(p);
-  }else{
-    p.snapped = false;
-    p.snappedEdge = null;
+    // A wall-snapped piece may only slide along its own wall.
+    if(slidePieceClear(p, [alongAxisFor(cand.face)])) return;
   }
+
+  p.cx = startX; p.cy = startY; p.horiz = startHoriz;
+  p.snapped = false;
+  p.snappedEdge = null;
+  p.snappedFace = null;
+  clampToRoom(p);
+  slidePieceClear(p, ['x','y']);
 }
 
 function dragSnap(p, idx){
@@ -548,7 +549,7 @@ function snapBox(b){
     clampBoxToRoom(b);
     b.snapped = false;
     b.snappedFace = null;
-    slideClearOfCorners(b, ['x','y']);
+    slideBoxClear(b, ['x','y']);
     return;
   }
 
@@ -579,7 +580,7 @@ function snapBox(b){
     anchorBox(b);
     // A wall-snapped box can only slide along that wall. If that leaves it
     // buried in an angled corner, this wall is not a valid home — try the next.
-    if(slideClearOfCorners(b, [cand.horiz ? 'x' : 'y'])) return;
+    if(slideBoxClear(b, [alongAxisFor(cand.face)])) return;
   }
 
   // No wall works, so leave it free-standing where the user put it.
@@ -587,7 +588,7 @@ function snapBox(b){
   b.snapped = false;
   b.snappedFace = null;
   clampBoxToRoom(b);
-  slideClearOfCorners(b, ['x','y']);
+  slideBoxClear(b, ['x','y']);
 }
 const ptInBox = (mx,my,b) => { const bb = boxBB(b); return mx>=bb.x1 && mx<=bb.x2 && my>=bb.y1 && my<=bb.y2; };
 
@@ -646,20 +647,22 @@ function cornerOverlapArea(bb, c){
   }
   return Math.abs(a)/2;
 }
-function boxClearOfCorners(b){
-  const bb = boxBB(b);
+// Wall pieces and boxes are both positioned by cx/cy, so the corner-clearing
+// logic is shared; only the footprint and the room clamp differ.
+function clearOfCorners(item, bbOf){
+  const bb = bbOf(item);
   return corners.every(c => !c.snapped || cornerOverlapArea(bb, c) < 1);
 }
 
-// Slide a box clear of every angled corner, moving only along the given axes.
-// Returns whether it ended up clear — a snapped box is restricted to its own
-// wall, so sometimes it simply cannot be.
-function slideClearOfCorners(b, axes){
+// Slide an item clear of every angled corner, moving only along the given axes.
+// Returns whether it ended up clear — something snapped to a wall is restricted
+// to that wall, so sometimes it simply cannot be.
+function slideClearOfCorners(item, axes, bbOf, clampFn){
   for(let pass=0; pass<3; pass++){
     let moved = false;
     for(const c of corners){
       if(!c.snapped) continue;
-      const bb = boxBB(b);
+      const bb = bbOf(item);
       if(cornerOverlapArea(bb, c) < 1) continue;
       let best = null;
       for(const axis of axes){
@@ -672,14 +675,30 @@ function slideClearOfCorners(b, axes){
         if(!best || Math.abs(delta) < Math.abs(best.delta)) best = {axis, delta};
       }
       if(!best) continue;
-      const wasX = b.cx, wasY = b.cy;
-      if(best.axis === 'x') b.cx += best.delta; else b.cy += best.delta;
-      clampBoxToRoom(b);
-      if(b.cx !== wasX || b.cy !== wasY) moved = true;
+      const wasX = item.cx, wasY = item.cy;
+      if(best.axis === 'x') item.cx += best.delta; else item.cy += best.delta;
+      clampFn(item);
+      if(item.cx !== wasX || item.cy !== wasY) moved = true;
     }
     if(!moved) break;
   }
-  return boxClearOfCorners(b);
+  return clearOfCorners(item, bbOf);
+}
+const slideBoxClear   = (b, axes) => slideClearOfCorners(b, axes, boxBB, clampBoxToRoom);
+const slidePieceClear = (p, axes) => slideClearOfCorners(p, axes, wpBB, clampToRoom);
+
+// The along-wall axis for a given snapped face.
+const alongAxisFor = face => (face === 'top' || face === 'bottom') ? 'x' : 'y';
+
+// After a piece is resized rather than moved, put it back inside the room and
+// clear of any angled corner its new size now reaches into.
+function settlePiece(p){
+  clampToRoom(p);
+  slidePieceClear(p, p.snapped && p.snappedFace ? [alongAxisFor(p.snappedFace)] : ['x','y']);
+}
+function settleBox(b){
+  clampBoxToRoom(b);
+  slideBoxClear(b, b.snapped && b.snappedFace ? [alongAxisFor(b.snappedFace)] : ['x','y']);
 }
 
 // Nearest obstacle edge either side of a box, measured along the wall it is
@@ -1054,8 +1073,8 @@ function wpFreeDims(p){
 }
 
 function applyWpDim(p, which, val){
-  if(which === 'len'){   p.len = Math.max(50, val);  anchorPiece(p); clampToRoom(p); return; }
-  if(which === 'thick'){ p.thick = Math.max(10, val); anchorPiece(p); clampToRoom(p); return; }
+  if(which === 'len'){   p.len = Math.max(50, val);  anchorPiece(p); settlePiece(p); return; }
+  if(which === 'thick'){ p.thick = Math.max(10, val); anchorPiece(p); settlePiece(p); return; }
 
   const bb = wpBB(p), obs = nearestObstacle(bb, p);
   const slide = () => {
@@ -2423,8 +2442,8 @@ function applyRoom(){
   roomW = w; roomH = h; roomCeil = ceil;
   roomName = $('room-name').value || 'Room';
   // Resizing keeps the contents; anything now outside is pulled back inside.
-  for(const p of wallPieces){ anchorPiece(p); clampToRoom(p); }
-  for(const b of boxes()){ anchorBox(b); }
+  for(const p of wallPieces){ anchorPiece(p); settlePiece(p); }
+  for(const b of boxes()){ anchorBox(b); settleBox(b); }
   for(const c of corners){ c.rx = clamp(c.rx,0,roomW); c.ry = clamp(c.ry,0,roomH); }
   for(const l of roomLabels){ l.x = clamp(l.x,0,roomW); l.y = clamp(l.y,0,roomH); }
   for(const o of openings){
@@ -2981,8 +3000,8 @@ function showSelected(){
     info.append(
       heading('Wall piece'),
       readout('Status', it.snapped ? 'Snapped to ' + it.snappedEdge : 'Not snapped — drag to a wall'),
-      numField('Length (mm)', it.len, v => { it.len = Math.max(50,v); anchorPiece(it); clampToRoom(it); }, {min:50}),
-      numField('Thickness (mm)', it.thick, v => { it.thick = Math.max(10,v); anchorPiece(it); clampToRoom(it); }, {min:10}),
+      numField('Length (mm)', it.len, v => { it.len = Math.max(50,v); anchorPiece(it); settlePiece(it); }, {min:50}),
+      numField('Thickness (mm)', it.thick, v => { it.thick = Math.max(10,v); anchorPiece(it); settlePiece(it); }, {min:10}),
       lockBtn(it), delBtn()
     );
   }else if(corners.includes(it)){
@@ -3054,13 +3073,13 @@ function showSelected(){
         snapBox(it);
       }),
       selField('Width (mm)', KU_WIDTHS.map(w => [w, w+'mm']), it.width, v => {
-        it.width = parseInt(v,10); anchorBox(it);
+        it.width = parseInt(v,10); anchorBox(it); settleBox(it);
       }),
       numField('Carcass depth (mm)', it.carcassDepth, v => {
-        it.carcassDepth = Math.max(50,v); it.depth = it.carcassDepth + it.doorDepth; anchorBox(it);
+        it.carcassDepth = Math.max(50,v); it.depth = it.carcassDepth + it.doorDepth; anchorBox(it); settleBox(it);
       }, {min:50}),
       numField('Door depth (mm)', it.doorDepth, v => {
-        it.doorDepth = Math.max(0,v); it.depth = it.carcassDepth + it.doorDepth; anchorBox(it);
+        it.doorDepth = Math.max(0,v); it.depth = it.carcassDepth + it.doorDepth; anchorBox(it); settleBox(it);
       }),
       numField('Total height (mm)', it.height, v => { it.height = Math.max(50,v); it.totalH = it.height; }, {min:50}),
       numField('Height off floor (mm)', it.mountH ?? 0, v => { it.mountH = Math.max(0,v); }),
@@ -3075,8 +3094,8 @@ function showSelected(){
       heading(it.label),
       readout('Status', it.snapped ? 'Against the ' + it.snappedFace + ' wall'
         : (it.snapToWall ? 'Not against a wall' : 'Free-standing')),
-      numField('Width (mm)', it.width, v => { it.width = Math.max(50,v); anchorBox(it); }, {min:50}),
-      numField('Depth (mm)', it.depth, v => { it.depth = Math.max(50,v); anchorBox(it); }, {min:50}),
+      numField('Width (mm)', it.width, v => { it.width = Math.max(50,v); anchorBox(it); settleBox(it); }, {min:50}),
+      numField('Depth (mm)', it.depth, v => { it.depth = Math.max(50,v); anchorBox(it); settleBox(it); }, {min:50}),
       numField('Height (mm)', it.height, v => { it.height = Math.max(50,v); }, {min:50}),
       numField('Height off floor (mm)', it.mountH ?? 0, v => { it.mountH = Math.max(0,v); }),
       el('div', {cls:'hint', text:'Footprint ' + fmtD(it.width) + ' × ' + fmtD(it.depth)}),
