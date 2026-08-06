@@ -67,7 +67,8 @@ const IDS = ['canvas','canvas-wrap','status','sidebar','toolbar','dim-editor','d
   'furniture-panel','furn-cat','furn-type','furn-size-display','selected-panel','selected-info',
   'schedule-panel','schedule-body','snap-grid','show-dims','btn-select','btn-label','btn-kitchen',
   'btn-furniture','btn-schedule','btn-undo','btn-redo','btn-plan','btn-elev','elev-wall','load-input',
-  'pdf-scale', 'status-msg', 'build', 'btn-wall'];
+  'pdf-scale', 'status-msg', 'build', 'btn-wall',
+  'btn-electric', 'electric-panel', 'fit-type', 'fit-height', 'fit-size-display'];
 for(const id of IDS) byId[id] = mkEl(id === 'canvas' ? 'canvas' : 'div', id);
 byId['room-w'].value = '8220';
 byId['room-h'].value = '5050';
@@ -123,6 +124,8 @@ const exposed = `
   get pendingDrawn(){return pendingDrawn}, get drawStart(){return drawStart},
   toC, wAng, wLen, setMode, cancelDrawing, setDrawnWallLength,
   dwGeom, dwCorners, ptInDrawnWall, pickAt,
+  get fittings(){return fittings}, addFitting, snapToSurface, fittingCorners,
+  ptInFitting, fittingBB, drawFittings, FITTING_SPECS, pointInPoly,
   get past(){return past}, get future(){return future},
   set selectedItem(v){selectedItem=v}, get selectedItem(){return selectedItem},
   addWallPiece, addCorner, addKitchenUnit, addFurniture, addDoor, addWindow,
@@ -660,6 +663,172 @@ check('clipByConvex intersects two rotated rectangles', () => {
   return Math.abs(area-expect) < 1
     ? `${Math.round(area)}mm2, matches the expected octagon`
     : fail(`${Math.round(area)} vs expected ${Math.round(expect)}`);
+});
+
+// ── Sockets and switches ─────────────────────────────────────────────────────
+function dropFitting(fitType, cx, cy, height){
+  document.getElementById('fit-type').value = fitType;
+  document.getElementById('fit-height').value = height === undefined ? '' : String(height);
+  api.addFitting();
+  const f = api.fittings[api.fittings.length-1];
+  f.cx = cx; f.cy = cy;
+  api.snapToSurface(f);
+  return f;
+}
+
+check('all five fitting types exist with the specified default heights', () => {
+  const want = {socket2:1100, socket1:1100, switch1:1300, fused:1100, cooker:1100};
+  const bad = [];
+  for(const [k, h] of Object.entries(want)){
+    const s = api.FITTING_SPECS[k];
+    if(!s){ bad.push(`${k} missing`); continue; }
+    if(s.mountH !== h) bad.push(`${s.label} defaults to ${s.mountH}, expected ${h}`);
+  }
+  if(bad.length) return fail(bad.join('; '));
+  const list = Object.values(api.FITTING_SPECS)
+    .map(s => `${s.label} ${s.mountH}mm`).join(', ');
+  return list;
+});
+
+check('a double socket is wider than a single one', () => {
+  const d = api.FITTING_SPECS.socket2, s = api.FITTING_SPECS.socket1;
+  return d.width > s.width
+    ? `double ${d.width}mm vs single ${s.width}mm`
+    : fail(`double ${d.width}mm is not wider than single ${s.width}mm`);
+});
+
+check('a socket snaps onto a wall at its default height', () => {
+  emptyRoom();
+  const f = dropFitting('socket2', 3000, 60);       // near the top wall
+  if(!f.snapped) return fail('did not snap to the wall');
+  if(f.snapType !== 'axis' || f.snapAxis !== 'h' || f.snapCoord !== 0)
+    return fail(`snapped as ${f.snapType}/${f.snapAxis}@${f.snapCoord}`);
+  if(f.mountH !== 1100) return fail(`height is ${f.mountH}, expected 1100`);
+  return `on the top wall at ${f.pos}mm along, ${f.mountH}mm to centre, ${f.width}mm plate`;
+});
+
+check('a light switch takes 1300 rather than the socket height', () => {
+  emptyRoom();
+  const sw = dropFitting('switch1', 3000, 60);
+  const so = dropFitting('socket1', 5000, 60);
+  return sw.mountH === 1300 && so.mountH === 1100
+    ? `switch at ${sw.mountH}mm, socket at ${so.mountH}mm`
+    : fail(`switch ${sw.mountH}, socket ${so.mountH}`);
+});
+
+check('a typed height overrides the default', () => {
+  emptyRoom();
+  const f = dropFitting('socket2', 3000, 60, 450);   // low-level socket
+  return f.mountH === 450 ? 'placed at 450mm as typed'
+                          : fail(`height is ${f.mountH}, expected 450`);
+});
+
+check('a fitting snaps to each of the four walls', () => {
+  const got = [];
+  for(const [name, cx, cy, axis, coord] of [
+    ['top', 3000, 60, 'h', 0], ['bottom', 3000, 4990, 'h', 5050],
+    ['left', 60, 2500, 'v', 0], ['right', 8160, 2500, 'v', 8220]]){
+    emptyRoom();
+    const f = dropFitting('socket1', cx, cy);
+    if(!f.snapped || f.snapAxis !== axis || f.snapCoord !== coord)
+      return fail(`${name}: got ${f.snapAxis}@${f.snapCoord}, expected ${axis}@${coord}`);
+    got.push(name);
+  }
+  return 'snapped to ' + got.join(', ');
+});
+
+check('a fitting snaps to an angled wall too', () => {
+  emptyRoom({corners:[{rx:0, ry:0, wa:3700, ha:550, rot:0, snapped:'placed'}]});
+  const h = api.hypOf(api.corners[0]);
+  const mx = h.p1.x + 0.5*h.len*h.ux, my = h.p1.y + 0.5*h.len*h.uy;
+  const f = dropFitting('socket2', mx + h.nx*40, my + h.ny*40);
+  if(f.snapType !== 'corner') return fail(`snapped as ${f.snapType}, expected corner`);
+  return `on the angled wall at t=${f.snapT.toFixed(2)}, ${f.mountH}mm high`;
+});
+
+check('a fitting is clickable despite being small', () => {
+  emptyRoom();
+  const f = dropFitting('socket1', 3000, 60);
+  const hit = api.pickAt(f.pos, 20);
+  const miss = api.pickAt(f.pos, 1500);
+  if(hit !== f) return fail('a click on the plate did not select it');
+  if(miss === f) return fail('a click 1.5m away still selected it');
+  return 'selected from on the plate, not from across the room';
+});
+
+check('fittings appear in the elevation at their real height', () => {
+  emptyRoom();
+  dropFitting('socket2', 2000, 60);
+  dropFitting('switch1', 4000, 60);
+  document.getElementById('elev-wall').value = 'top';
+  const items = api.elevItems(api.elevInfo()).filter(i => i.kind === 'fitting');
+  if(items.length !== 2) return fail(`${items.length} fittings in the elevation, expected 2`);
+  const sock = items.find(i => i.label === '2G');
+  const sw = items.find(i => i.label === 'SW');
+  if(!sock || !sw) return fail(`labels were ${items.map(i => i.label).join(',')}`);
+  // The plate should straddle its quoted centre height.
+  if(Math.abs((sock.z1+sock.z2)/2 - 1100) > 0.001) return fail(`socket centred at ${(sock.z1+sock.z2)/2}`);
+  if(Math.abs((sw.z1+sw.z2)/2 - 1300) > 0.001) return fail(`switch centred at ${(sw.z1+sw.z2)/2}`);
+  api.setView('elev'); api.drawElevation(); api.setView('plan');
+  return `socket ${sock.z1}-${sock.z2} centred 1100, switch ${sw.z1}-${sw.z2} centred 1300`;
+});
+
+check('the schedule counts fittings by type and height', () => {
+  emptyRoom();
+  dropFitting('socket2', 1500, 60);
+  dropFitting('socket2', 3000, 60);
+  dropFitting('socket2', 1500, 4990, 450);     // same type, different height
+  dropFitting('cooker', 5000, 60);
+  const s = api.computeSchedule();
+  if(s.fitTotal !== 4) return fail(`fitTotal is ${s.fitTotal}, expected 4`);
+  const doubles = s.fits.filter(f => f.code === '2G');
+  if(doubles.length !== 2) return fail(`double sockets grouped into ${doubles.length} rows, expected 2 (1100 and 450)`);
+  return `${s.fitTotal} fittings in ${s.fits.length} rows: `
+    + s.fits.map(f => `${f.code}x${f.count}@${f.mountH}`).join(', ');
+});
+
+check('fittings survive save and load, including on an angled wall', () => {
+  emptyRoom({corners:[{rx:0, ry:0, wa:3700, ha:550, rot:0, snapped:'placed'}]});
+  const h = api.hypOf(api.corners[0]);
+  const mx = h.p1.x + 0.4*h.len*h.ux, my = h.p1.y + 0.4*h.len*h.uy;
+  // Beyond x=3700, where the splay ends — nearer the top wall than the angle.
+  const flat = dropFitting('socket2', 6000, 60);
+  if(flat.snapType !== 'axis') return fail(`the flat one snapped as ${flat.snapType}, expected axis`);
+  const ang = dropFitting('switch1', mx + h.nx*40, my + h.ny*40);
+  if(ang.snapType !== 'corner') return fail('the second one did not take the angled wall');
+  const before = {n:api.fittings.length, t:ang.snapT, h:ang.mountH};
+
+  api.applySnapshot(JSON.parse(JSON.stringify(api.roomData())));
+  const after = api.fittings;
+  if(after.length !== before.n) return fail(`${before.n} before, ${after.length} after`);
+  // Match by code: picking the first corner-snapped one would be ambiguous.
+  const a = after.find(f => f.code === 'SW');
+  if(!a) return fail('the switch went missing');
+  if(a.snapType !== 'corner') return fail('the switch lost its angled wall');
+  if(!api.corners.includes(a.snapCorner)) return fail('snapCorner is not a live reference');
+  if(Math.abs(a.snapT-before.t) > 1e-9) return fail(`moved along the wall`);
+  if(a.mountH !== before.h) return fail(`height changed to ${a.mountH}`);
+  api.drawPlan();
+  return `both survived, angled one re-linked at t=${a.snapT.toFixed(2)}, ${a.mountH}mm`;
+});
+
+check('fittings render into the PDF', () => {
+  emptyRoom();
+  dropFitting('socket2', 2000, 60);
+  dropFitting('cooker', 5000, 60);
+  const p = api.planPage(50);
+  const has2G = /\(2G\) Tj/.test(p.content);
+  const hasCCU = /\(CCU\) Tj/.test(p.content);
+  let outside = 0, pts = 0;
+  for(const line of p.content.split('\n')){
+    const m = /^([-\d.]+) ([-\d.]+) (?:m|l)$/.exec(line);
+    if(!m) continue;
+    pts++;
+    if(+m[1] < -2 || +m[2] < -2 || +m[1] > p.w+2 || +m[2] > p.h+2) outside++;
+  }
+  if(!has2G || !hasCCU) return fail(`codes in the PDF: 2G=${has2G} CCU=${hasCCU}`);
+  if(outside) return fail(`${outside} of ${pts} coordinates off the page`);
+  return `both codes labelled, ${pts} coordinates all on the page`;
 });
 
 // ── Draw-wall tool (switched off, kept working) ──────────────────────────────

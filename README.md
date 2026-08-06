@@ -47,6 +47,15 @@ set in the sidebar.
 **Kitchen units** — base, wall, tall and island, with real carcass and door depths.
 Wall units are drawn dashed to show they are overhead.
 
+**Sockets and switches** — double socket, single socket, light switch, fused switch
+and cooker point. Each has a default height measured from the finished floor to the
+centre of the plate: 1100mm for sockets, the fused switch and the cooker point,
+1300mm for a light switch. Type a different height before adding, or change it
+afterwards. They snap to any wall including angled ones, show their code (2G, 1G,
+SW, FCU, CCU) in plan, and appear at their true height in Elevation with a dashed
+centre line — which is the view that matters when setting them out. The schedule
+groups them by type and height, so the same socket at two heights lists separately.
+
 **Runs.** Two items on the same wall never overlap: drag one into another and it is
 pushed out to touch. Bring one within 150mm of a neighbour and it clicks flush, so a
 run adds up exactly — three units of 600, 600 and 500 measure 1700mm with no slivers
