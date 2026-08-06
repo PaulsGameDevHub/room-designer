@@ -67,7 +67,7 @@ const IDS = ['canvas','canvas-wrap','status','sidebar','toolbar','dim-editor','d
   'furniture-panel','furn-cat','furn-type','furn-size-display','selected-panel','selected-info',
   'schedule-panel','schedule-body','snap-grid','show-dims','btn-select','btn-label','btn-kitchen',
   'btn-furniture','btn-schedule','btn-undo','btn-redo','btn-plan','btn-elev','elev-wall','load-input',
-  'pdf-scale', 'status-msg', 'build'];
+  'pdf-scale', 'status-msg', 'build', 'btn-wall'];
 for(const id of IDS) byId[id] = mkEl(id === 'canvas' ? 'canvas' : 'div', id);
 byId['room-w'].value = '8220';
 byId['room-h'].value = '5050';
@@ -119,6 +119,9 @@ const exposed = `
   get wallPieces(){return wallPieces}, get corners(){return corners},
   get openings(){return openings}, get kitchenUnits(){return kitchenUnits},
   get furniture(){return furniture}, get roomLabels(){return roomLabels},
+  get drawnWalls(){return drawnWalls}, get mode(){return mode},
+  get pendingDrawn(){return pendingDrawn}, get drawStart(){return drawStart},
+  toC, wAng, confirmDrawnWall, cancelDrawnWall, setMode,
   get past(){return past}, get future(){return future},
   set selectedItem(v){selectedItem=v}, get selectedItem(){return selectedItem},
   addWallPiece, addCorner, addKitchenUnit, addFurniture, addDoor, addWindow,
@@ -658,12 +661,74 @@ check('clipByConvex intersects two rotated rectangles', () => {
     : fail(`${Math.round(area)} vs expected ${Math.round(expect)}`);
 });
 
+// ── Draw-wall tool (trial) ───────────────────────────────────────────────────
+// This code path shipped in v15 with no button to reach it, so it had never run.
+// Drive the real click handler rather than calling internals, by converting room
+// coordinates back to canvas pixels the way the app does.
+function clickCanvas(roomX, roomY){
+  const p = api.toC(roomX, roomY);
+  const listeners = byId['canvas']._listeners.click || [];
+  if(!listeners.length) throw new Error('no click listener registered on the canvas');
+  for(const fn of listeners) fn({clientX:p.x, clientY:p.y, button:0});
+}
+check('the draw-wall tool produces a line at the exact typed length', () => {
+  emptyRoom();
+  api.setMode('wall');
+  if(api.mode !== 'wall') return fail(`setMode left the mode as ${api.mode}`);
+
+  // Two clicks: a diagonal roughly 1000 x 1000, then type an exact 2000.
+  clickCanvas(1000, 1000);
+  clickCanvas(2000, 2000);
+  if(!api.pendingDrawn) return fail('the second click did not produce a pending wall');
+  const calc = Math.hypot(1000, 1000);
+
+  document.getElementById('wc-input').value = '2000';
+  api.confirmDrawnWall();
+  if(api.drawnWalls.length !== 1) return fail(`${api.drawnWalls.length} walls created`);
+  const w = api.drawnWalls[0];
+  const len = Math.hypot(w.x2-w.x1, w.y2-w.y1);
+  const deg = api.wAng(w);
+  if(Math.abs(len - 2000) > 0.001) return fail(`length is ${len.toFixed(1)}mm, expected 2000`);
+  if(Math.abs(deg - 45) > 0.001) return fail(`angle is ${deg.toFixed(2)}deg, expected 45`);
+  return `drew a ${Math.round(calc)}mm diagonal, retyped to exactly ${len}mm at ${deg}deg`;
+});
+
+check('a drawn wall can be selected, dimensioned and deleted', () => {
+  const w = api.drawnWalls[0];
+  // Without this guard the test passes vacuously: deleting nothing also leaves
+  // zero walls behind.
+  if(!w) return fail('no drawn wall to work with — the previous test must run first');
+  api.selectedItem = w;
+  api.showSelected();
+  api.drawPlan();                       // exercises drawDrawnWallDims
+  const p = api.planPage(50);           // and the PDF path
+  if(!p.content.length) return fail('the PDF produced no content');
+  api.deleteSelected();
+  return api.drawnWalls.length === 0
+    ? 'selected, dimensioned, rendered to PDF and deleted cleanly'
+    : fail(`${api.drawnWalls.length} still present after delete`);
+});
+
+check('cancelling a half-drawn wall leaves nothing behind', () => {
+  emptyRoom();
+  api.setMode('wall');
+  clickCanvas(500, 500);
+  api.cancelDrawnWall();
+  api.setMode('select');
+  return api.drawnWalls.length === 0 && !api.pendingDrawn && !api.drawStart
+    ? 'no stray wall, pending or start point left'
+    : fail(`walls=${api.drawnWalls.length} pending=${!!api.pendingDrawn} start=${!!api.drawStart}`);
+});
+
 // ── Runs of units along one wall ─────────────────────────────────────────────
-const emptyRoom = extra => api.applySnapshot(Object.assign({
-  roomW:8220, roomH:5050, roomCeil:2400,
-  drawnWalls:[], roomLabels:[], openings:[], furniture:[], corners:[],
-  wallPieces:[], kitchenUnits:[]
-}, extra || {}));
+// Declared with `function` so tests earlier in the file can use it too.
+function emptyRoom(extra){
+  api.applySnapshot(Object.assign({
+    roomW:8220, roomH:5050, roomCeil:2400,
+    drawnWalls:[], roomLabels:[], openings:[], furniture:[], corners:[],
+    wallPieces:[], kitchenUnits:[]
+  }, extra || {}));
+}
 
 // Drop a base unit of the given width at a spot and let it snap.
 function dropUnit(width, cx, cy){

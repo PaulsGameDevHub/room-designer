@@ -73,6 +73,8 @@ table.sched tr.total td{font-weight:600;border-top:1px solid var(--bd);border-bo
   <div id="toolbar">
     <button id="btn-select" class="active" onclick="setMode('select')">Select</button>
     <button onclick="addWallPiece()">Add wall</button>
+    <!-- Trial feature. To remove it, delete this one button. -->
+    <button id="btn-wall" onclick="setMode('wall')">Draw wall</button>
     <button onclick="addCorner()">Angled corner</button>
     <button onclick="addDoor()">Door</button>
     <button onclick="addWindow()">Window</button>
@@ -148,6 +150,8 @@ table.sched tr.total td{font-weight:600;border-top:1px solid var(--bd);border-bo
           <div><label id="wc-calc">Calculated</label><input id="wc-input" type="text"></div>
           <button class="primary" onclick="confirmDrawnWall()">Confirm</button>
           <button onclick="cancelDrawnWall()">Cancel</button>
+          <div class="hint">Type the exact length you want. Drawn as a thin line
+            at any angle — it has no thickness and nothing snaps to it.</div>
         </div>
       </div>
 
@@ -236,7 +240,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-06 19:04';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-06 22:36';   /*BUILD_STAMP*/
 
 const COL = {
   dim:'#85B7EB', dimPdf:'#185FA5', sel:'#1D9E75', drag:'#D85A30',
