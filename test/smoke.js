@@ -121,7 +121,8 @@ const exposed = `
   get furniture(){return furniture}, get roomLabels(){return roomLabels},
   get drawnWalls(){return drawnWalls}, get mode(){return mode},
   get pendingDrawn(){return pendingDrawn}, get drawStart(){return drawStart},
-  toC, wAng, confirmDrawnWall, cancelDrawnWall, setMode,
+  toC, wAng, wLen, setMode, cancelDrawing, setDrawnWallLength,
+  dwGeom, dwCorners, ptInDrawnWall, pickAt,
   get past(){return past}, get future(){return future},
   set selectedItem(v){selectedItem=v}, get selectedItem(){return selectedItem},
   addWallPiece, addCorner, addKitchenUnit, addFurniture, addDoor, addWindow,
@@ -671,26 +672,51 @@ function clickCanvas(roomX, roomY){
   if(!listeners.length) throw new Error('no click listener registered on the canvas');
   for(const fn of listeners) fn({clientX:p.x, clientY:p.y, button:0});
 }
-check('the draw-wall tool produces a line at the exact typed length', () => {
+check('the second click places the wall immediately, 100mm thick', () => {
   emptyRoom();
   api.setMode('wall');
   if(api.mode !== 'wall') return fail(`setMode left the mode as ${api.mode}`);
 
-  // Two clicks: a diagonal roughly 1000 x 1000, then type an exact 2000.
   clickCanvas(1000, 1000);
+  if(api.drawnWalls.length) return fail('the first click already created a wall');
   clickCanvas(2000, 2000);
-  if(!api.pendingDrawn) return fail('the second click did not produce a pending wall');
-  const calc = Math.hypot(1000, 1000);
 
-  document.getElementById('wc-input').value = '2000';
-  api.confirmDrawnWall();
-  if(api.drawnWalls.length !== 1) return fail(`${api.drawnWalls.length} walls created`);
+  if(api.drawnWalls.length !== 1) return fail(`${api.drawnWalls.length} walls after the second click`);
   const w = api.drawnWalls[0];
-  const len = Math.hypot(w.x2-w.x1, w.y2-w.y1);
-  const deg = api.wAng(w);
-  if(Math.abs(len - 2000) > 0.001) return fail(`length is ${len.toFixed(1)}mm, expected 2000`);
-  if(Math.abs(deg - 45) > 0.001) return fail(`angle is ${deg.toFixed(2)}deg, expected 45`);
-  return `drew a ${Math.round(calc)}mm diagonal, retyped to exactly ${len}mm at ${deg}deg`;
+  if(w.thick !== 100) return fail(`thickness is ${w.thick}, expected 100`);
+  const len = api.wLen(w), deg = api.wAng(w);
+  if(Math.abs(len - Math.hypot(1000,1000)) > 0.001) return fail(`length ${len.toFixed(1)}`);
+  if(Math.abs(deg - 45) > 0.001) return fail(`angle ${deg.toFixed(2)}deg, expected 45`);
+  if(api.drawStart) return fail('the start point was not cleared, so the next click would extend this wall');
+  if(api.mode !== 'wall') return fail('mode left wall-drawing, so several walls cannot be drawn in a row');
+  return `placed on the second click: ${Math.round(len)}mm at ${deg}deg, ${w.thick}mm thick, ready to draw another`;
+});
+
+check('a drawn wall is a solid rectangle of its thickness', () => {
+  const w = api.drawnWalls[0];
+  if(!w) return fail('no drawn wall to measure');
+  const area = api.polyArea(api.dwCorners(w));
+  const expect = api.wLen(w) * w.thick;
+  if(Math.abs(area - expect) > 1) return fail(`footprint ${Math.round(area)}mm2 vs ${Math.round(expect)}`);
+  // A point 40mm off the centre line is inside a 100mm wall; 80mm is outside.
+  const g = api.dwGeom(w);
+  const at = d => ({x:g.cx + g.nx*d, y:g.cy + g.ny*d});
+  const inAt40 = api.ptInDrawnWall(at(40).x, at(40).y, w);
+  const inAt80 = api.ptInDrawnWall(at(80).x, at(80).y, w);
+  if(!inAt40 || inAt80) return fail(`hit test wrong: 40mm off=${inAt40}, 80mm off=${inAt80}`);
+  return `${Math.round(area)}mm2 footprint, and it is clickable across its full ${w.thick}mm width`;
+});
+
+check('the length can still be set exactly after placing', () => {
+  const w = api.drawnWalls[0];
+  if(!w) return fail('no drawn wall');
+  const x1 = w.x1, y1 = w.y1;
+  api.setDrawnWallLength(w, 2000);
+  const len = api.wLen(w), deg = api.wAng(w);
+  if(Math.abs(len - 2000) > 0.001) return fail(`length is ${len} after asking for 2000`);
+  if(Math.abs(deg - 45) > 0.001) return fail(`angle changed to ${deg}`);
+  if(Math.abs(w.x1-x1) > 0.001 || Math.abs(w.y1-y1) > 0.001) return fail('the start point moved');
+  return `rescaled to exactly ${len}mm about its start, still at ${deg}deg`;
 });
 
 check('a drawn wall can be selected, dimensioned and deleted', () => {
@@ -713,11 +739,28 @@ check('cancelling a half-drawn wall leaves nothing behind', () => {
   emptyRoom();
   api.setMode('wall');
   clickCanvas(500, 500);
-  api.cancelDrawnWall();
+  if(!api.drawStart) return fail('the first click did not register a start point');
+  api.cancelDrawing();
   api.setMode('select');
-  return api.drawnWalls.length === 0 && !api.pendingDrawn && !api.drawStart
-    ? 'no stray wall, pending or start point left'
-    : fail(`walls=${api.drawnWalls.length} pending=${!!api.pendingDrawn} start=${!!api.drawStart}`);
+  return api.drawnWalls.length === 0 && !api.drawStart
+    ? 'no stray wall or start point left'
+    : fail(`walls=${api.drawnWalls.length} start=${!!api.drawStart}`);
+});
+
+check('a drawn wall can be clicked anywhere across its width', () => {
+  emptyRoom();
+  api.setMode('wall');
+  clickCanvas(2000, 2000);
+  clickCanvas(5000, 2000);          // a horizontal 3000mm wall, 100mm thick
+  api.setMode('select');
+  const w = api.drawnWalls[0];
+  if(!w) return fail('no wall created');
+  // 40mm above the centre line is still within a 100mm wall.
+  const hit = api.pickAt(3500, 2040);
+  const miss = api.pickAt(3500, 2400);
+  if(hit !== w) return fail('a click inside the wall did not select it');
+  if(miss === w) return fail('a click 400mm away still selected it');
+  return 'selected from inside its thickness, and not from well outside it';
 });
 
 // ── Runs of units along one wall ─────────────────────────────────────────────

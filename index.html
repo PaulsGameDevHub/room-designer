@@ -144,17 +144,6 @@ table.sched tr.total td{font-weight:600;border-top:1px solid var(--bd);border-bo
 
       <div class="divider"></div>
 
-      <div id="wall-confirm-panel" style="display:none;">
-        <h3>Confirm drawn wall</h3>
-        <div class="panel">
-          <div><label id="wc-calc">Calculated</label><input id="wc-input" type="text"></div>
-          <button class="primary" onclick="confirmDrawnWall()">Confirm</button>
-          <button onclick="cancelDrawnWall()">Cancel</button>
-          <div class="hint">Type the exact length you want. Drawn as a thin line
-            at any angle — it has no thickness and nothing snaps to it.</div>
-        </div>
-      </div>
-
       <div id="label-place-panel" style="display:none;">
         <h3>Add label</h3>
         <div class="panel">
@@ -232,6 +221,7 @@ const DIM_OFFSET = 52;     // px from outer wall to the overall dimension line
 const SNAP_MM = 250;       // snap capture distance for wall pieces, mm
 const BOX_SNAP_MM = 300;   // snap capture distance for units and furniture, mm
 const RUN_SNAP_MM = 150;   // how close two units must be to click flush, mm
+const DRAWN_WALL_T = 100;  // default thickness of a drawn wall, mm
 const HISTORY_MAX = 100;
 const MM_PER_PT = 25.4 / 72;
 const PT_PER_MM = 72 / 25.4;
@@ -240,7 +230,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-06 22:36';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-06 22:43';   /*BUILD_STAMP*/
 
 const COL = {
   dim:'#85B7EB', dimPdf:'#185FA5', sel:'#1D9E75', drag:'#D85A30',
@@ -335,7 +325,7 @@ let kitchenUnits = [], furniture = [];
 
 let mode = 'select';
 let selectedItem = null, dragging = null, dragOffX = 0, dragOffY = 0;
-let drawStart = null, pendingDrawn = null, mousePos = {x:0, y:0};
+let drawStart = null, mousePos = {x:0, y:0};
 let dimHitAreas = [], activeDim = null;
 let panning = false, panStart = null, spaceDown = false;
 // True once the user zooms or pans, which stops a resize from re-fitting and
@@ -363,6 +353,32 @@ const toC = (mx,my) => ({x: mx*scale + offsetX, y: my*scale + offsetY});
 const toM = (cx,cy) => ({x: (cx-offsetX)/scale, y: (cy-offsetY)/scale});
 const sg = v => $('snap-grid').checked ? Math.round(v/100)*100 : Math.round(v);
 const wLen = w => Math.hypot(w.x2-w.x1, w.y2-w.y1);
+
+// ── Drawn walls ────────────────────────────────────────────────────────────
+// Held as a centre line plus a thickness so it can run at any angle. u follows
+// the line, n crosses it.
+function dwGeom(w){
+  const dx = w.x2-w.x1, dy = w.y2-w.y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx/len, uy = dy/len;
+  return {len, ux, uy, nx:-uy, ny:ux,
+          cx:(w.x1+w.x2)/2, cy:(w.y1+w.y2)/2,
+          half:(w.thick ?? DRAWN_WALL_T)/2,
+          angle:Math.atan2(uy, ux)};
+}
+function dwCorners(w){
+  const g = dwGeom(w);
+  const ox = g.nx*g.half, oy = g.ny*g.half;
+  return [
+    {x:w.x1+ox, y:w.y1+oy}, {x:w.x2+ox, y:w.y2+oy},
+    {x:w.x2-ox, y:w.y2-oy}, {x:w.x1-ox, y:w.y1-oy},
+  ];
+}
+function ptInDrawnWall(mx, my, w){
+  const g = dwGeom(w);
+  const dx = mx-g.cx, dy = my-g.cy;
+  return Math.abs(dx*g.ux + dy*g.uy) <= g.len/2 && Math.abs(dx*g.nx + dy*g.ny) <= g.half;
+}
 function wAng(w){ let a = Math.atan2(w.y2-w.y1, w.x2-w.x1)*180/Math.PI; return a<0 ? a+360 : a; }
 function distPtSeg(p,w){
   const dx = w.x2-w.x1, dy = w.y2-w.y1, l2 = dx*dx + dy*dy;
@@ -1982,14 +1998,32 @@ function drawCorners(){
 
 function drawDrawnWalls(){
   for(const w of drawnWalls){
-    const p1c = toC(w.x1,w.y1), p2c = toC(w.x2,w.y2);
     const isSel = selectedItem === w, isDrag = dragging === w;
-    ctx.strokeStyle = isSel ? COL.sel : '#B5D4F4';
-    ctx.lineWidth = isSel ? 4 : 3; ctx.setLineDash([]);
-    ctx.beginPath(); ctx.moveTo(p1c.x,p1c.y); ctx.lineTo(p2c.x,p2c.y); ctx.stroke();
-    ctx.fillStyle = isSel ? COL.sel : COL.dim;
-    ctx.beginPath(); ctx.arc(p1c.x,p1c.y,5,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(p2c.x,p2c.y,5,0,Math.PI*2); ctx.fill();
+    const cp = dwCorners(w).map(p => toC(p.x, p.y));
+
+    // A solid wall of real thickness, drawn like the wall pieces.
+    ctx.beginPath();
+    ctx.moveTo(cp[0].x, cp[0].y);
+    for(let i=1; i<cp.length; i++) ctx.lineTo(cp[i].x, cp[i].y);
+    ctx.closePath();
+    ctx.fillStyle = isDrag ? 'rgba(211,90,48,0.18)'
+                  : isSel ? 'rgba(15,110,86,0.22)' : 'rgba(24,95,165,0.30)';
+    ctx.strokeStyle = isDrag ? COL.drag : isSel ? COL.sel : COL.wallPiece;
+    ctx.lineWidth = isSel ? 2.5 : 1.5;
+    ctx.setLineDash([]);
+    ctx.fill(); ctx.stroke();
+
+    // End markers, so the direction it was drawn in stays visible.
+    if(isSel){
+      const p1c = toC(w.x1,w.y1), p2c = toC(w.x2,w.y2);
+      ctx.fillStyle = COL.sel;
+      ctx.beginPath(); ctx.arc(p1c.x,p1c.y,4,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(p2c.x,p2c.y,4,0,Math.PI*2); ctx.fill();
+    }
+    if(w.locked){
+      const g = dwGeom(w), m = toC(g.cx, g.cy);
+      drawLockBadge(m.x, m.y);
+    }
     if(isSel && !isDrag) drawDrawnWallDims(w, true);
   }
 }
@@ -3038,6 +3072,8 @@ function applySnapshot(s){
     l.text ??= 'Label';
     l.size ??= 'medium';
   }
+  // Drawn walls predate having a thickness at all.
+  for(const w of drawnWalls) w.thick ??= DRAWN_WALL_T;
   rebindCornerSnaps();
   syncRoomInputs();
 }
@@ -3154,8 +3190,6 @@ function zoomBy(factor, anchorX, anchorY){
 function setMode(m){
   mode = m;
   drawStart = null;
-  pendingDrawn = null;
-  $('wall-confirm-panel').style.display = 'none';
   $('label-place-panel').style.display = m === 'label' ? 'block' : 'none';
   document.querySelectorAll('#toolbar button').forEach(b => b.classList.remove('active'));
   const btn = $('btn-'+m);
@@ -3203,8 +3237,7 @@ function pickAt(mx, my){
   for(const p of wallPieces)   if(ptInRect(mx,my,p)) return p;
   for(const c of corners)      if(ptInTri(mx,my,c)) return c;
   for(const l of roomLabels)   if(ptInLabel(mx,my,l)) return l;
-  const thr = 10/scale;
-  for(const w of drawnWalls)   if(distPtSeg({x:mx,y:my}, w) < thr) return w;
+  for(const w of drawnWalls)   if(ptInDrawnWall(mx,my,w)) return w;
   return null;
 }
 
@@ -3381,17 +3414,20 @@ canvas.addEventListener('click', e => {
   if(mode === 'wall'){
     if(!drawStart){
       drawStart = pt;
-      status('Click the end point');
+      status('Click the end point — Esc to cancel');
     }else{
       const len = Math.hypot(pt.x-drawStart.x, pt.y-drawStart.y);
       if(len < 5) return;
-      pendingDrawn = {x1:drawStart.x, y1:drawStart.y, x2:pt.x, y2:pt.y};
-      const inp = $('wc-input');
-      inp.value = fmtE(len);
-      $('wc-calc').textContent = 'Calculated: ' + fmtD(len);
-      $('wall-confirm-panel').style.display = 'block';
-      inp.focus(); inp.select();
+      // Placed on the second click. Length and thickness are then editable in
+      // the sidebar, or by clicking the length dimension on the canvas.
+      pushHistory();
+      const w = {x1:drawStart.x, y1:drawStart.y, x2:pt.x, y2:pt.y, thick:DRAWN_WALL_T};
+      drawnWalls.push(w);
       drawStart = null;
+      selectedItem = w;
+      showSelected();
+      status(`Wall added — ${fmtD(len)} at ${Math.round(wAng(w))}°. `
+        + `Click another start point, or Esc to stop.`);
     }
     requestDraw();
     return;
@@ -3424,26 +3460,18 @@ canvas.addEventListener('wheel', e => {
 canvas.addEventListener('auxclick', e => { if(e.button === 1) e.preventDefault(); });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-function confirmDrawnWall(){
-  if(!pendingDrawn) return;
-  const val = parseMM($('wc-input').value);
-  if(isNaN(val) || val <= 0){ status('Enter the wall length in mm'); return; }
-  const dx = pendingDrawn.x2-pendingDrawn.x1, dy = pendingDrawn.y2-pendingDrawn.y1;
-  const orig = Math.hypot(dx, dy);
-  pushHistory();
-  drawnWalls.push({
-    x1:pendingDrawn.x1, y1:pendingDrawn.y1,
-    x2:pendingDrawn.x1 + dx*(val/orig), y2:pendingDrawn.y1 + dy*(val/orig)
-  });
-  pendingDrawn = null;
-  $('wall-confirm-panel').style.display = 'none';
-  status('Wall added');
+function cancelDrawing(){
+  drawStart = null;
   requestDraw();
 }
-function cancelDrawnWall(){
-  pendingDrawn = null; drawStart = null;
-  $('wall-confirm-panel').style.display = 'none';
-  requestDraw();
+// Rescale a drawn wall about its start point, the way typing a length should.
+function setDrawnWallLength(w, val){
+  const dx = w.x2-w.x1, dy = w.y2-w.y1;
+  const orig = Math.hypot(dx, dy);
+  if(orig < 0.001) return;
+  const r = Math.max(50, val)/orig;
+  w.x2 = w.x1 + dx*r;
+  w.y2 = w.y1 + dy*r;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3475,7 +3503,7 @@ window.addEventListener('keydown', e => {
 
   if(e.key === 'Escape'){
     if(activeDim){ cancelDim(); return; }
-    if(pendingDrawn || drawStart){ cancelDrawnWall(); return; }
+    if(drawStart){ cancelDrawing(); return; }
     if(mode !== 'select'){ setMode('select'); return; }
     selectedItem = null;
     showSelected(); requestDraw();
@@ -3574,10 +3602,6 @@ function rotateSelected(){
 $('dim-inp').addEventListener('keydown', e => {
   if(e.key === 'Enter') confirmDim();
   if(e.key === 'Escape') cancelDim();
-});
-$('wc-input').addEventListener('keydown', e => {
-  if(e.key === 'Enter') confirmDrawnWall();
-  if(e.key === 'Escape') cancelDrawnWall();
 });
 for(const id of ['room-w','room-h','room-ceil']){
   $(id).addEventListener('keydown', e => { if(e.key === 'Enter') applyRoom(); });
@@ -3780,9 +3804,11 @@ function showSelected(){
     // Drawn wall
     info.append(
       heading('Drawn wall'),
-      readout('Length', fmtD(wLen(it))),
+      numField('Length (mm)', Math.round(wLen(it)), v => setDrawnWallLength(it, v), {min:50}),
+      numField('Thickness (mm)', it.thick ?? DRAWN_WALL_T, v => { it.thick = Math.max(10, v); }, {min:10}),
       readout('Angle', Math.round(wAng(it)) + '°'),
-      delBtn()
+      el('div', {cls:'hint', text:'Length is measured from the point you clicked first.'}),
+      lockBtn(it), delBtn()
     );
   }
   refreshSchedule();
@@ -4295,9 +4321,15 @@ function planPage(denom){
     g.ops.push('h'); g.B();
   }
 
-  // Drawn walls
-  g.ink(INK.room).lw(1.6);
-  for(const w of drawnWalls) g.line(X(w.x1), Y(w.y1), X(w.x2), Y(w.y2));
+  // Drawn walls, as solid rectangles of their real thickness
+  for(const w of drawnWalls){
+    const cp = dwCorners(w);
+    g.fill(tint([0.09,0.37,0.65], 0.72)).ink(shade([0.09,0.37,0.65], 0.1)).lw(0.7);
+    g.m(X(cp[0].x), Y(cp[0].y));
+    for(let i=1; i<cp.length; i++) g.l(X(cp[i].x), Y(cp[i].y));
+    g.ops.push('h');
+    g.B();
+  }
 
   // Kitchen units and furniture
   for(const b of boxes()){
