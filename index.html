@@ -236,7 +236,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-06 17:56';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-06 19:04';   /*BUILD_STAMP*/
 
 const COL = {
   dim:'#85B7EB', dimPdf:'#185FA5', sel:'#1D9E75', drag:'#D85A30',
@@ -671,6 +671,7 @@ function snapBox(b){
     unsnapBox(b);
     clampBoxToRoom(b);
     slideBoxClear(b, ['x','y']);
+    separateUnits(b);
     return;
   }
 
@@ -711,7 +712,10 @@ function snapBox(b){
       b.rot = 0; b.horiz = true;
       if(!placeBoxOnHyp(b, cand.corner, cand.t)) continue;
       // Flush contact reads as zero overlap, so this only rejects real burial.
-      if(clearOfCorners(b, boxPolygon) && boxInsideRoom(b)) return;
+      if(clearOfCorners(b, boxPolygon) && boxInsideRoom(b)){
+        settleInRun(b);
+        return;
+      }
       continue;
     }
 
@@ -728,6 +732,7 @@ function snapBox(b){
     // buried in an angled corner, this wall is not a valid home — try the next.
     if(slideBoxClear(b, [alongAxisFor(cand.face)])){
       settleInRun(b);
+      separateUnits(b);
       return;
     }
   }
@@ -745,7 +750,9 @@ const ptInBox = (mx, my, b) => ptInItem(mx, my, b);
 // Two units on the same wall should not occupy the same space, and when they
 // come close they should click flush, so a kitchen run adds up exactly.
 function settleInRun(b){
-  if(!b.snapped || !b.snappedFace || isAngled(b)) return;
+  if(!b.snapped) return;
+  if(isAngled(b)){ settleInAngledRun(b); return; }
+  if(!b.snappedFace) return;
   const face = b.snappedFace;
   const alongH = face === 'top' || face === 'bottom';
   const pos = alongH ? 'cx' : 'cy';       // the coordinate that runs along the wall
@@ -798,6 +805,84 @@ function settleInRun(b){
     b[pos] = saved;
     anchorBox(b);
   }
+}
+
+// The same two rules for an item lying along an angled wall, where the only
+// freedom is its position along the hypotenuse.
+function settleInAngledRun(b){
+  const c = b.snapCorner, h = corners.includes(c) ? hypOf(c) : null;
+  if(!h) return;
+  const half = spanOf(b)/2;
+  const neighbours = () => boxes().filter(o => o !== b && isAngled(o) && o.snapCorner === c);
+
+  for(let pass=0; pass<4; pass++){
+    const cur = b.snapT*h.len, lo = cur-half, hi = cur+half;
+    let moved = false;
+    for(const o of neighbours()){
+      const oc = o.snapT*h.len, oHalf = spanOf(o)/2;
+      const oLo = oc-oHalf, oHi = oc+oHalf;
+      if(hi <= oLo + 0.5 || lo >= oHi - 0.5) continue;
+      const before = oLo-half, after = oHi+half;
+      const pick = Math.abs(before-cur) <= Math.abs(after-cur) ? before : after;
+      placeOnHyp(b, c, pick/h.len);
+      moved = true;
+      break;
+    }
+    if(!moved) break;
+  }
+
+  const g = itemHypGaps(b);
+  if(!g) return;
+  let target = null;
+  if(g.gapLo > 0.5 && g.gapLo <= RUN_SNAP_MM && (g.gapHi <= 0.5 || g.gapLo <= g.gapHi)) target = g.nearLo + half;
+  else if(g.gapHi > 0.5 && g.gapHi <= RUN_SNAP_MM) target = g.nearHi - half;
+  if(target === null) return;
+  const saved = b.snapT;
+  placeOnHyp(b, c, target/h.len);
+  if(!clearOfCorners(b, boxPolygon) || !boxInsideRoom(b)) placeOnHyp(b, c, saved);
+}
+
+// Kitchen carcasses are solid, so two of them cannot share floor space whether
+// they are against a wall or standing free in the middle of the room. Furniture
+// is deliberately exempt, so chairs still tuck under a table and a stool under
+// an island overhang.
+function separateUnits(b){
+  if(b.type !== 'kitchen' || isAngled(b)) return;
+  // A wall-snapped unit may only move along its wall; a free one may go either way.
+  const face = b.snapped ? b.snappedFace : null;
+  const freeX = !face || face === 'top'  || face === 'bottom';
+  const freeY = !face || face === 'left' || face === 'right';
+
+  for(let pass=0; pass<5; pass++){
+    const bb = boxBB(b);
+    let moved = false;
+    for(const o of kitchenUnits){
+      if(o === b) continue;
+      const ob = boxBB(o);
+      const ox = Math.min(bb.x2, ob.x2) - Math.max(bb.x1, ob.x1);
+      const oy = Math.min(bb.y2, ob.y2) - Math.max(bb.y1, ob.y1);
+      if(ox <= 0.5 || oy <= 0.5) continue;          // touching or clear
+      // Escape whichever way is shortest.
+      const options = [];
+      if(freeX){
+        options.push({pos:'cx', delta:ob.x1 - bb.x2});
+        options.push({pos:'cx', delta:ob.x2 - bb.x1});
+      }
+      if(freeY){
+        options.push({pos:'cy', delta:ob.y1 - bb.y2});
+        options.push({pos:'cy', delta:ob.y2 - bb.y1});
+      }
+      if(!options.length) continue;
+      options.sort((p,q) => Math.abs(p.delta) - Math.abs(q.delta));
+      b[options[0].pos] += options[0].delta;
+      anchorBox(b);
+      clampBoxToRoom(b);
+      moved = true;
+      break;
+    }
+    if(!moved) break;
+  }
+  slideBoxClear(b, freeX && freeY ? ['x','y'] : [freeX ? 'x' : 'y']);
 }
 
 // ── Snapping flush along an angled corner ──────────────────────────────────

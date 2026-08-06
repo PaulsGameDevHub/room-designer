@@ -131,7 +131,7 @@ const exposed = `
   boxHypGaps, boxInsideRoom, polyArea, clipByConvex, refreshElevWalls, rebindCornerSnaps,
   spanOf, depthOf, itemAngle, itemAxes, itemCorners, itemPolygon, itemAABB, ptInItem,
   placeOnHyp, itemHypGaps, itemInsideRoom, hypCandidates, unsnapPiece, anchorPiece,
-  settleInRun, anchorBox,
+  settleInRun, settleInAngledRun, separateUnits, anchorBox,
   releaseSnap, cornerGeometry, refreshSchedule, showSelected, applyRoom, setBoxRot,
   writeAutosave, restoreAutosave, exportPDF, exportPNG, saveRoom, textWidthPt,
   KU_SPECS, FURN_SPECS,
@@ -737,6 +737,102 @@ check('a unit clicks flush to a wall stub on the same wall', () => {
     : fail(`unit right edge at ${hi}, expected 2950 (span ${lo}..${hi})`);
 });
 
+// ── Kitchen carcasses are solid ──────────────────────────────────────────────
+function dropIsland(width, cx, cy){
+  document.getElementById('ku-type').value = 'island';
+  document.getElementById('ku-width').value = String(width);
+  api.addKitchenUnit();
+  const k = api.kitchenUnits[api.kitchenUnits.length-1];
+  k.cx = cx; k.cy = cy;
+  api.snapBox(k);
+  return k;
+}
+const areaOverlap = (p, q) => {
+  const a = api.boxBB(p), b = api.boxBB(q);
+  const ox = Math.min(a.x2,b.x2) - Math.max(a.x1,b.x1);
+  const oy = Math.min(a.y2,b.y2) - Math.max(a.y1,b.y1);
+  return (ox > 0 && oy > 0) ? ox*oy : 0;
+};
+
+check('two islands cannot occupy the same floor space', () => {
+  emptyRoom();
+  const a = dropIsland(1000, 3000, 2500);
+  const b = dropIsland(1000, 3200, 2500);   // dropped squarely on top
+  const area = areaOverlap(a, b);
+  const bb = api.boxBB(b);
+  return area < 1
+    ? `pushed clear to x ${bb.x1}..${bb.x2}, overlap ${area}mm2`
+    : fail(`still overlapping by ${Math.round(area)}mm2`);
+});
+
+check('an island pushed off a base unit ends up clear of it', () => {
+  emptyRoom();
+  const wallUnit = dropUnit(600, 2000, 250);      // against the top wall
+  const isle = dropIsland(1000, 2100, 500);      // dropped over it
+  const area = areaOverlap(wallUnit, isle);
+  return area < 1
+    ? `island clear of the wall unit, overlap ${area}mm2`
+    : fail(`island still overlaps the base unit by ${Math.round(area)}mm2`);
+});
+
+check('an island escapes by the shortest route', () => {
+  emptyRoom();
+  const a = dropIsland(1000, 3000, 2500);        // x 2500..3500, y 2210..2790
+  // Nudged mostly downward, so the shortest way out is downward, not sideways.
+  const b = dropIsland(1000, 3000, 2700);
+  const bb = api.boxBB(b), ab = api.boxBB(a);
+  if(areaOverlap(a,b) > 1) return fail('still overlapping');
+  return Math.abs(bb.y1 - ab.y2) < 0.001
+    ? `moved down to sit on the first island's edge at y=${ab.y2}`
+    : fail(`ended at y ${bb.y1}..${bb.y2}, expected its top edge at ${ab.y2}`);
+});
+
+check('chairs can still tuck under a dining table', () => {
+  emptyRoom();
+  document.getElementById('furn-cat').value = 'Dining';
+  document.getElementById('furn-type').value = 'dining6';
+  api.addFurniture();
+  const table = api.furniture[0];
+  table.snapToWall = false;
+  table.cx = 4000; table.cy = 2500;
+  api.snapBox(table);
+  document.getElementById('furn-type').value = 'chair';
+  api.addFurniture();
+  const chair = api.furniture[1];
+  chair.snapToWall = false;
+  chair.cx = 4000; chair.cy = 2500;             // deliberately under the table
+  api.snapBox(chair);
+  const area = areaOverlap(table, chair);
+  return area > 1
+    ? `chair still overlaps the table by ${Math.round(area)}mm2, as it should`
+    : fail('the chair was pushed out from under the table');
+});
+
+check('two units on an angled wall butt up and do not overlap', () => {
+  emptyRoom({corners:[{rx:0, ry:0, wa:3700, ha:550, rot:0, snapped:'placed'}]});
+  const h = api.hypOf(api.corners[0]);
+  const onHyp = (width, t) => {
+    document.getElementById('ku-type').value = 'base';
+    document.getElementById('ku-width').value = String(width);
+    api.addKitchenUnit();
+    const k = api.kitchenUnits[api.kitchenUnits.length-1];
+    const px = h.p1.x + t*h.len*h.ux, py = h.p1.y + t*h.len*h.uy;
+    k.cx = px + h.nx*(k.depth/2); k.cy = py + h.ny*(k.depth/2);
+    api.snapBox(k);
+    return k;
+  };
+  const a = onHyp(600, 0.4);
+  if(!api.isAngled(a)) return fail('first unit did not take the angled wall');
+  // Second one placed to overlap the first along the wall.
+  const b = onHyp(600, 0.45);
+  if(!api.isAngled(b)) return fail('second unit did not take the angled wall');
+  const aC = a.snapT*h.len, bC = b.snapT*h.len;
+  const gap = Math.abs(bC-aC) - 600;
+  return Math.abs(gap) < 0.01
+    ? `along the wall they meet exactly, centres ${Math.round(aC)} and ${Math.round(bC)}mm apart`
+    : fail(`gap of ${gap.toFixed(2)}mm between them along the wall`);
+});
+
 check('furniture joins the run too, not just kitchen units', () => {
   emptyRoom();
   const ku = dropUnit(600, 2000, 250);          // base unit on the top wall
@@ -1031,21 +1127,66 @@ check('wall chain segments sum to the wall length', () => {
   return Math.abs(sum - api.roomW) < 30 ? `sum=${Math.round(sum)} of ${api.roomW}` : fail(`segments sum to ${Math.round(sum)} but the wall is ${api.roomW}`);
 });
 
-check('schedule computes', () => {
-  const s = api.computeSchedule();
-  return `area=${(s.areaMm2/1e6).toFixed(2)}m2 perim=${s.perimeterMm} units=${s.unitTotal} `
-    + `worktop=${s.worktopMm}mm doors=${s.doors} windows=${s.windows} furn=${s.furn.length}`;
+// A known room with known contents, so the arithmetic is actually checked
+// rather than merely printed.
+const scheduleFixture = () => {
+  emptyRoom({
+    openings:[
+      {type:'door', width:900, height:2030, thickness:100, sill:0, swing:'left',
+       snapped:true, snapType:'axis', snapAxis:'h', snapCoord:0, pos:2000, snapInward:1, cx:2000, cy:0},
+      {type:'window', width:1000, height:1000, thickness:100, sill:1100,
+       snapped:true, snapType:'axis', snapAxis:'v', snapCoord:0, pos:3000, snapInward:1, cx:0, cy:3000},
+    ]
+  });
+  dropUnit(600, 1000, 250);
+  dropUnit(800, 4000, 250);
+  return api.computeSchedule();
+};
+
+check('schedule computes the room figures exactly', () => {
+  const s = scheduleFixture();
+  const bad = [];
+  if(s.areaMm2 !== 8220*5050) bad.push(`area ${s.areaMm2} != ${8220*5050}`);
+  if(s.perimeterMm !== 2*(8220+5050)) bad.push(`perimeter ${s.perimeterMm} != ${2*(8220+5050)}`);
+  if(s.wallAreaMm2 !== 2*(8220+5050)*2400) bad.push(`gross wall ${s.wallAreaMm2}`);
+  if(s.doors !== 1 || s.windows !== 1) bad.push(`${s.doors} doors, ${s.windows} windows`);
+  if(s.unitTotal !== 2) bad.push(`${s.unitTotal} units`);
+  if(s.worktopMm !== 1400) bad.push(`worktop ${s.worktopMm} != 1400`);
+  return bad.length ? fail(bad.join('; '))
+    : `${(s.areaMm2/1e6).toFixed(2)}m2 floor, ${s.perimeterMm}mm perimeter, `
+      + `${s.unitTotal} units, ${s.worktopMm}mm worktop, ${s.doors} door, ${s.windows} window`;
 });
 check('worktop run counts base and island units only', () => {
+  // Own fixture, so the answer cannot be a vacuous zero.
+  emptyRoom();
+  dropUnit(600, 1000, 250);
+  dropUnit(800, 2000, 250);
+  dropIsland(1000, 4000, 2500);
+  document.getElementById('ku-type').value = 'wall';      // overhead, no worktop
+  document.getElementById('ku-width').value = '600';
+  api.addKitchenUnit();
+  const wu = api.kitchenUnits[api.kitchenUnits.length-1];
+  wu.cx = 6000; wu.cy = 200;
+  api.snapBox(wu);
+
   const s = api.computeSchedule();
-  const bases = api.kitchenUnits.filter(k => k.kuType === 'base' || k.kuType === 'island');
-  const expect = bases.reduce((n,k) => n+k.width, 0);
-  return s.worktopMm === expect ? `${s.worktopMm}mm from ${bases.length} units` : fail(`got ${s.worktopMm}, expected ${expect}`);
+  const counted = api.kitchenUnits.filter(k => k.kuType === 'base' || k.kuType === 'island');
+  const expect = counted.reduce((n,k) => n+k.width, 0);
+  if(!expect) return fail('fixture produced no worktop units');
+  if(s.unitTotal !== 4) return fail(`expected 4 units in the schedule, got ${s.unitTotal}`);
+  return s.worktopMm === expect
+    ? `${s.worktopMm}mm from ${counted.length} base/island units, wall unit excluded`
+    : fail(`got ${s.worktopMm}, expected ${expect}`);
 });
-check('net wall area subtracts openings', () => {
-  const s = api.computeSchedule();
-  return s.netWallAreaMm2 < s.wallAreaMm2 && s.openingAreaMm2 > 0
-    ? `gross=${(s.wallAreaMm2/1e6).toFixed(2)} net=${(s.netWallAreaMm2/1e6).toFixed(2)}` : false;
+check('net wall area subtracts exactly the opening areas', () => {
+  const s = scheduleFixture();
+  const expect = 900*2030 + 1000*1000;          // the door plus the window
+  if(s.openingAreaMm2 !== expect)
+    return fail(`openings total ${s.openingAreaMm2}mm2, expected ${expect}`);
+  if(s.netWallAreaMm2 !== s.wallAreaMm2 - expect)
+    return fail(`net ${s.netWallAreaMm2} != gross ${s.wallAreaMm2} - ${expect}`);
+  return `gross ${(s.wallAreaMm2/1e6).toFixed(2)}m2 less ${(expect/1e6).toFixed(2)}m2 `
+    + `of openings = ${(s.netWallAreaMm2/1e6).toFixed(2)}m2`;
 });
 
 check('plan renders without throwing', () => { api.drawPlan(); return true; });
