@@ -648,6 +648,76 @@ check('clipByConvex intersects two rotated rectangles', () => {
     : fail(`${Math.round(area)} vs expected ${Math.round(expect)}`);
 });
 
+// ── Gaps must only count things on the same wall ─────────────────────────────
+// Reported case: a unit on the left wall took its gap from a wall piece 4.3m away
+// on the top wall, because every wall piece was treated as an obstacle whatever
+// its position.
+check('a gap ignores a wall piece that is nowhere near the unit', () => {
+  api.applySnapshot({
+    roomW:8220, roomH:5050, roomCeil:2400,
+    drawnWalls:[], roomLabels:[], openings:[], furniture:[],
+    // A shallow canted corner across the top-left, as in the user's plan.
+    corners:[{rx:0, ry:0, wa:3500, ha:520, rot:0, snapped:'placed'}],
+    // A short wall stub hanging off the TOP wall, far to the right.
+    wallPieces:[{cx:4300, cy:500, len:1000, thick:100, horiz:false,
+                 snapped:true, snappedFace:'top', anchorWallCoord:0, orientationLocked:true}],
+    // A base unit against the LEFT wall.
+    kitchenUnits:[{kuType:'base', width:600, carcassDepth:560, doorDepth:20, depth:580,
+                   totalH:870, height:870, plinth:150, mountH:0, cx:290, cy:1700,
+                   horiz:false, rot:1, snapped:true, snappedFace:'left', anchorWallCoord:0}]
+  });
+  const ku = api.kitchenUnits[0];
+  const bb = api.boxBB(ku);
+  const near = api.boxNearestObjects(ku, bb);
+
+  // The stub spans x 4250..4350, so it never crosses the unit's depth band of
+  // x 0..580 and must be ignored. The splay does cross it, ending at y=520.
+  const stubBottom = 1000;
+  if(Math.abs(near.nearLo - stubBottom) < 1)
+    return fail(`gap measured to the far wall stub at y=${stubBottom} (${near.gapLo}mm)`);
+  return Math.abs(near.nearLo - 520) < 1
+    ? `gap above is ${near.gapLo}mm, measured to the splay at y=520, not the stub at y=1000`
+    : fail(`gap above reaches y=${Math.round(near.nearLo)}, expected the splay at y=520`);
+});
+
+check('a wall piece that does cross the band still counts', () => {
+  // Same room, but now the stub hangs off the LEFT wall, across the unit's depth.
+  api.applySnapshot({
+    roomW:8220, roomH:5050, roomCeil:2400,
+    drawnWalls:[], roomLabels:[], openings:[], furniture:[], corners:[],
+    wallPieces:[{cx:400, cy:1000, len:800, thick:100, horiz:true,
+                 snapped:true, snappedFace:'left', anchorWallCoord:0, orientationLocked:true}],
+    kitchenUnits:[{kuType:'base', width:600, carcassDepth:560, doorDepth:20, depth:580,
+                   totalH:870, height:870, plinth:150, mountH:0, cx:290, cy:1700,
+                   horiz:false, rot:1, snapped:true, snappedFace:'left', anchorWallCoord:0}]
+  });
+  const ku = api.kitchenUnits[0];
+  const near = api.boxNearestObjects(ku, api.boxBB(ku));
+  // The stub occupies y 950..1050 across x 0..800, so the gap should stop at 1050.
+  return Math.abs(near.nearLo - 1050) < 1
+    ? `gap above is ${near.gapLo}mm, stopping at the stub's face at y=1050`
+    : fail(`gap above reaches y=${Math.round(near.nearLo)}, expected the stub at y=1050`);
+});
+
+check('a door in another wall does not shorten the run', () => {
+  api.applySnapshot({
+    roomW:8220, roomH:5050, roomCeil:2400,
+    drawnWalls:[], roomLabels:[], furniture:[], corners:[], wallPieces:[],
+    kitchenUnits:[{kuType:'base', width:600, carcassDepth:560, doorDepth:20, depth:580,
+                   totalH:870, height:870, plinth:150, mountH:0, cx:290, cy:2500,
+                   horiz:false, rot:1, snapped:true, snappedFace:'left', anchorWallCoord:0}],
+    // A door in the TOP wall, 3m along, nothing to do with the left wall.
+    openings:[{type:'door', width:900, height:2030, thickness:100, sill:0, swing:'left',
+               snapped:true, snapType:'axis', snapAxis:'h', snapCoord:0, pos:3000,
+               snapInward:1, cx:3000, cy:0}]
+  });
+  const ku = api.kitchenUnits[0];
+  const near = api.boxNearestObjects(ku, api.boxBB(ku));
+  return Math.abs(near.nearLo) < 1
+    ? `gap above runs the full ${near.gapLo}mm to the top wall`
+    : fail(`gap above stopped at y=${Math.round(near.nearLo)}, expected 0`);
+});
+
 // ── Every object type against every kind of wall ────────────────────────────
 // The whole point of the feature, asserted as one matrix so a regression in any
 // single cell fails loudly.

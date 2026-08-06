@@ -944,40 +944,40 @@ function settleBox(b){
 function boxNearestObjects(b, bb){
   const face = b.snappedFace;
   const alongH = face === 'top' || face === 'bottom';
+  const axis = alongH ? 'x' : 'y';       // the run along the wall
+  const depth = alongH ? 'y' : 'x';      // across it, away from the wall
   const obstacles = [{lo:0, hi:0}, alongH ? {lo:roomW, hi:roomW} : {lo:roomH, hi:roomH}];
 
+  // Only something that actually crosses this item's depth band can shorten its
+  // run along the wall. A wall piece on the far side of the room cannot, however
+  // much of the along-axis it happens to span.
+  const dLo = bb[depth+'1'], dHi = bb[depth+'2'];
+  const inBand = ob => ob[depth+'2'] > dLo + 1 && ob[depth+'1'] < dHi - 1;
+  const interval = ob => ({lo:ob[axis+'1'], hi:ob[axis+'2']});
+
   for(const other of boxes()){
-    if(other === b || !other.snapped || other.snappedFace !== face) continue;
-    const ob = boxBB(other);
-    obstacles.push(alongH ? {lo:ob.x1, hi:ob.x2} : {lo:ob.y1, hi:ob.y2});
+    if(other === b || !other.snapped) continue;
+    // Square items on the same wall, or anything angled that reaches into the band.
+    if(isAngled(other) ? !inBand(boxBB(other)) : other.snappedFace !== face) continue;
+    obstacles.push(interval(boxBB(other)));
   }
   for(const wp of wallPieces){
     if(!wp.snapped) continue;
     const wb = wpBB(wp);
-    obstacles.push(alongH ? {lo:wb.x1, hi:wb.x2} : {lo:wb.y1, hi:wb.y2});
+    if(!inBand(wb)) continue;
+    obstacles.push(interval(wb));
   }
   for(const op of openings){
     if(!op.snapped) continue;
     const ob = openingBB(op);
-    if(!ob) continue;
-    obstacles.push(alongH ? {lo:ob.x1, hi:ob.x2} : {lo:ob.y1, hi:ob.y2});
-  }
-  // Boxes lying along an angled wall are not on any face, but they still block
-  // the run, so contribute their bounding extent.
-  for(const other of boxes()){
-    if(other === b || !isAngled(other)) continue;
-    const ob = boxBB(other);
-    const depthKey = alongH ? 'y' : 'x';
-    if(ob[depthKey+'2'] < bb[depthKey+'1'] || ob[depthKey+'1'] > bb[depthKey+'2']) continue;
-    obstacles.push(alongH ? {lo:ob.x1, hi:ob.x2} : {lo:ob.y1, hi:ob.y2});
+    if(!ob || !inBand(ob)) continue;
+    obstacles.push(interval(ob));
   }
   // Angled corners block a slice of the wall, so a gap should measure to the
   // splay rather than straight through it.
   for(const c of corners){
     if(!c.snapped) continue;
-    const axis = alongH ? 'x' : 'y';
-    const depthKey = alongH ? 'y' : 'x';
-    const sh = cornerShadow(c, axis, bb[depthKey+'1'], bb[depthKey+'2']);
+    const sh = cornerShadow(c, axis, dLo, dHi);
     if(sh) obstacles.push({lo:sh.lo, hi:sh.hi});
   }
 
