@@ -48,7 +48,9 @@ input[type=text],input[type=number],select{width:100%;font:inherit;font-size:12p
 .k{font-size:11px;color:var(--fg2);}
 .v{font-size:13px;font-weight:500;}
 #status{font-size:11px;color:var(--fg2);padding:5px 12px;border-top:1px solid var(--bd3);flex:none;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  display:flex;align-items:center;gap:12px;white-space:nowrap;}
+#status-msg{overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;}
+#build{flex:none;color:var(--fg3);font-variant-numeric:tabular-nums;}
 
 #dim-editor{display:none;position:absolute;z-index:100;background:var(--bg);border:1px solid var(--bd-info);
   border-radius:var(--r);padding:8px 10px;min-width:180px;}
@@ -208,7 +210,10 @@ table.sched tr.total td{font-weight:600;border-top:1px solid var(--bd);border-bo
       </div>
     </div>
   </div>
-  <div id="status">Set the inside room size, then start placing items</div>
+  <div id="status">
+    <span id="status-msg">Set the inside room size, then start placing items</span>
+    <span id="build" title="Which build you are looking at. Compare this with the build I tell you I deployed."></span>
+  </div>
 </div>
 
 <script>
@@ -226,6 +231,11 @@ const HISTORY_MAX = 100;
 const MM_PER_PT = 25.4 / 72;
 const PT_PER_MM = 72 / 25.4;
 const STORE_KEY = 'roomdesigner.autosave.v16';
+
+// Shown bottom-right so you can tell at a glance which build you are looking at,
+// rather than guessing whether a refresh picked up a new deploy. The line below
+// is rewritten by tools/stamp.js — do not edit it by hand.
+const BUILD = 'v16 · 2026-08-06 17:35';   /*BUILD_STAMP*/
 
 const COL = {
   dim:'#85B7EB', dimPdf:'#185FA5', sel:'#1D9E75', drag:'#D85A30',
@@ -355,7 +365,7 @@ function distPtSeg(p,w){
   const t = clamp(((p.x-w.x1)*dx + (p.y-w.y1)*dy)/l2, 0, 1);
   return Math.hypot(p.x-(w.x1+t*dx), p.y-(w.y1+t*dy));
 }
-function status(msg){ $('status').textContent = msg; }
+function status(msg){ $('status-msg').textContent = msg; }
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Geometry — wall pieces
@@ -4670,6 +4680,7 @@ window.addEventListener('beforeunload', () => { clearTimeout(autosaveTimer); wri
 
 initDropdowns();
 updateHistoryButtons();
+$('build').textContent = BUILD;
 
 // The container can start with no size at all — a background tab, a collapsed
 // pane, an iframe that has not been laid out. Nothing can be measured or fitted

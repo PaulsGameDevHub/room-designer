@@ -67,7 +67,7 @@ const IDS = ['canvas','canvas-wrap','status','sidebar','toolbar','dim-editor','d
   'furniture-panel','furn-cat','furn-type','furn-size-display','selected-panel','selected-info',
   'schedule-panel','schedule-body','snap-grid','show-dims','btn-select','btn-label','btn-kitchen',
   'btn-furniture','btn-schedule','btn-undo','btn-redo','btn-plan','btn-elev','elev-wall','load-input',
-  'pdf-scale'];
+  'pdf-scale', 'status-msg', 'build'];
 for(const id of IDS) byId[id] = mkEl(id === 'canvas' ? 'canvas' : 'div', id);
 byId['room-w'].value = '8220';
 byId['room-h'].value = '5050';
@@ -171,6 +171,15 @@ if(bootError){
 console.log('BOOT OK');
 
 // ── Tests ──────────────────────────────────────────────────────────────────
+check('the build stamp is filled in and looks stamped, not left at the default', () => {
+  const shown = byId['build'].textContent;
+  if(!/^v\d+ · \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(shown))
+    return fail(`build stamp reads "${shown}", which is not the expected shape`);
+  if(/ 00:00$/.test(shown))
+    return fail(`build stamp is still the placeholder "${shown}" — run node tools/stamp.js`);
+  return `shows "${shown}"`;
+});
+
 check('room defaults', () => api.roomW === 8220 && api.roomH === 5050 && api.roomCeil === 2400);
 check('fitView produced a positive scale', () => api.scale > 0 && isFinite(api.scale));
 

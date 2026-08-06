@@ -88,6 +88,20 @@ closing the tab no longer loses the plan.
 | `+` / `-` or wheel | zoom (wheel zooms to the cursor) |
 | middle-drag or `Space`-drag | pan |
 
+## Build stamp
+
+The bottom-right corner shows which build you are looking at, e.g.
+`v16 · 2026-08-06 17:35`. Compare it with the stamp quoted when a change was
+deployed — if it is older, you are on a cached copy and need a hard refresh
+(Ctrl+F5). Before committing, refresh the stamp:
+
+```bash
+node tools/stamp.js
+```
+
+It rewrites the `BUILD` line in `index.html` and prints the new value. A test
+fails if the stamp is ever left at its placeholder.
+
 ## Tests
 
 ```bash
