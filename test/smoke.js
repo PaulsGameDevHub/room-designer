@@ -127,6 +127,8 @@ const exposed = `
   planPage, schedulePage, buildPdf, roomData, boxes, boxBB, snapBox, snapDoor, wpBB,
   boxNearestObjects, cornerShadow, clipToSlab, cornerOverlapArea,
   slideBoxClear, slidePieceClear, settlePiece, settleBox, clearOfCorners, firstSnap, reSnap,
+  isAngled, boxAngle, boxAxes, boxCorners, boxPolygon, hypOf, placeBoxOnHyp,
+  boxHypGaps, boxInsideRoom, polyArea, clipByConvex, refreshElevWalls, rebindCornerSnaps,
   releaseSnap, cornerGeometry, refreshSchedule, showSelected, applyRoom, setBoxRot,
   writeAutosave, restoreAutosave, exportPDF, exportPNG, saveRoom, textWidthPt,
   KU_SPECS, FURN_SPECS,
@@ -142,12 +144,21 @@ try{
 
 const api = globalThis.__api;
 const results = [];
+
+// A test may return: true/undefined (pass), a string (pass, with a note),
+// false, or fail('why'). Returning a bare string that happens to describe a
+// problem is NOT a failure, so every negative branch must use fail().
+const FAILED = Symbol('failed');
+const fail = note => ({[FAILED]:true, note:String(note)});
+
 function check(name, fn){
   try{
     const r = fn();
-    results.push([r === false ? 'FAIL' : 'PASS', name, r === true || r === false || r === undefined ? '' : String(r)]);
+    if(r === false) results.push(['FAIL', name, '']);
+    else if(r && typeof r === 'object' && r[FAILED]) results.push(['FAIL', name, r.note]);
+    else results.push(['PASS', name, typeof r === 'string' ? r : '']);
   }catch(e){
-    results.push(['FAIL', name, e.message]);
+    results.push(['FAIL', name, 'threw: ' + e.message]);
   }
 }
 
@@ -169,7 +180,7 @@ check('wall piece snaps when its end reaches a wall', () => {
   api.releaseSnap(p, 0);
   const bb = api.wpBB(p);
   return p.snapped && p.snappedFace === 'top' && Math.abs(bb.y1) < 0.001
-    ? `face=top, top edge at y=${bb.y1}` : `snapped=${p.snapped} face=${p.snappedFace}`;
+    ? `face=top, top edge at y=${bb.y1}` : fail(`snapped=${p.snapped} face=${p.snappedFace}`);
 });
 
 check('add kitchen units', () => {
@@ -189,7 +200,7 @@ check('kitchen unit snaps to the top wall', () => {
 check('snapped unit sits exactly against the wall', () => {
   const ku = api.kitchenUnits[0];
   const bb = api.boxBB(ku);
-  return Math.abs(bb.y1 - 0) < 0.001 ? 'y1=' + bb.y1 : 'y1=' + bb.y1;
+  return Math.abs(bb.y1) < 0.001 ? 'y1=' + bb.y1 : fail('bottom of the unit is at y=' + bb.y1 + ', expected 0');
 });
 
 check('add furniture', () => {
@@ -233,19 +244,19 @@ check('door snaps to a wall and records the new-format fields', () => {
   d.cx = 3000; d.cy = 40;
   api.snapDoor(d);
   return d.snapped && d.snapAxis === 'h' && d.snapCoord === 0 && d.wall === null
-    ? `axis=h coord=0 pos=${d.pos}` : `snapped=${d.snapped} axis=${d.snapAxis} coord=${d.snapCoord}`;
+    ? `axis=h coord=0 pos=${d.pos}` : fail(`snapped=${d.snapped} axis=${d.snapAxis} coord=${d.snapCoord}`);
 });
 check('window snaps to the left wall', () => {
   const w = api.openings[1];
   w.cx = 40; w.cy = 3500;   // clear of the wall piece at the top
   api.snapDoor(w);
   return w.snapped && w.snapAxis === 'v' && w.snapCoord === 0
-    ? `axis=v coord=0 pos=${w.pos}` : `snapped=${w.snapped} axis=${w.snapAxis} coord=${w.snapCoord}`;
+    ? `axis=v coord=0 pos=${w.pos}` : fail(`snapped=${w.snapped} axis=${w.snapAxis} coord=${w.snapCoord}`);
 });
 check('window kept its own defaults, not the door values', () => {
   const w = api.openings[1];
   return w.width === 1000 && w.height === 1000 && w.sill === 1100
-    ? `w=${w.width} h=${w.height} sill=${w.sill}` : `w=${w.width} h=${w.height} sill=${w.sill}`;
+    ? `w=${w.width} h=${w.height} sill=${w.sill}` : fail(`got w=${w.width} h=${w.height} sill=${w.sill}, expected 1000/1000/1100`);
 });
 
 check('angled corner', () => { api.addCorner(); return api.corners.length === 1; });
@@ -268,7 +279,7 @@ check('a unit never penetrates an angled wall, anywhere along it', () => {
   for(let y = 1000; y <= 3400; y += 25){
     ku.cx = 300; ku.cy = y;
     api.snapBox(ku);
-    const area = api.cornerOverlapArea(api.boxBB(ku), c);
+    const area = api.cornerOverlapArea(api.boxPolygon(ku), c);
     if(area > worst){ worst = area; worstAt = y; }
     if(Math.abs(ku.cy - y) > 1) held++;
   }
@@ -276,7 +287,7 @@ check('a unit never penetrates an angled wall, anywhere along it', () => {
   api.deleteSelected();
   return worst < 1
     ? `97 positions swept, max penetration ${worst.toFixed(1)}mm2, held back at ${held} of them`
-    : `penetrated ${worst.toFixed(0)}mm2 at cursor y=${worstAt}`;
+    : fail(`penetrated ${worst.toFixed(0)}mm2 at cursor y=${worstAt}`);
 });
 
 check('a unit sits flush against the splay rather than short of it', () => {
@@ -291,7 +302,7 @@ check('a unit sits flush against the splay rather than short of it', () => {
   const touching = Math.abs(bb.y2 - 1900) < 1;
   api.selectedItem = ku;
   api.deleteSelected();
-  return touching ? 'bottom edge rests exactly on y=1900' : `bottom edge at y=${bb.y2}`;
+  return touching ? 'bottom edge rests exactly on y=1900' : fail(`bottom edge at y=${bb.y2}, expected 1900`);
 });
 
 check('gap dimensions measure to the splay, not through it', () => {
@@ -306,7 +317,7 @@ check('gap dimensions measure to the splay, not through it', () => {
   api.deleteSelected();
   return Math.abs(near.nearHi - 1900) < 1
     ? `gap after reaches the splay at ${Math.round(near.nearHi)}`
-    : `gap after reaches ${Math.round(near.nearHi)}, expected 1900`;
+    : fail(`gap after reaches ${Math.round(near.nearHi)}, expected 1900`);
 });
 
 check('an unsnapped free-standing item is also kept out', () => {
@@ -317,10 +328,10 @@ check('an unsnapped free-standing item is also kept out', () => {
   f.snapToWall = false;
   f.cx = 200; f.cy = 2100;        // squarely inside the splay
   api.snapBox(f);
-  const area = api.cornerOverlapArea(api.boxBB(f), api.corners[0]);
+  const area = api.cornerOverlapArea(api.boxPolygon(f), api.corners[0]);
   api.selectedItem = f;
   api.deleteSelected();
-  return area < 1 ? 'pushed clear of the triangle' : `still overlapping by ${area.toFixed(0)}mm2`;
+  return area < 1 ? 'pushed clear of the triangle' : fail(`still overlapping by ${area.toFixed(0)}mm2`);
 });
 
 check('clipToSlab handles a triangle wholly outside the slab', () => {
@@ -350,7 +361,7 @@ check('a wall piece never penetrates an angled wall either', () => {
   api.deleteSelected();
   return worst < 1
     ? `97 positions swept, max penetration ${worst.toFixed(1)}mm2, snapped at ${snapCount}`
-    : `penetrated ${worst.toFixed(0)}mm2 at cursor y=${worstAt}`;
+    : fail(`penetrated ${worst.toFixed(0)}mm2 at cursor y=${worstAt}`);
 });
 
 check('growing a wall piece into a splay pushes it back out', () => {
@@ -373,10 +384,10 @@ check('growing a wall piece into a splay pushes it back out', () => {
   const area = api.cornerOverlapArea(after, c);
   api.selectedItem = p;
   api.deleteSelected();
-  if(afterY <= beforeY) return `test failed to grow the Y extent (${beforeY} -> ${afterY})`;
+  if(afterY <= beforeY) return fail(`the test failed to grow the Y extent (${beforeY} -> ${afterY}), so it proves nothing`);
   return area < 1
     ? `Y extent ${beforeY}->${afterY}mm, settled at y ${Math.round(after.y1)}..${Math.round(after.y2)}, clear of the splay`
-    : `overlapping by ${area.toFixed(0)}mm2 after growing`;
+    : fail(`overlapping by ${area.toFixed(0)}mm2 after growing`);
 });
 
 check('a piece with nowhere valid to snap is left free rather than buried', () => {
@@ -392,7 +403,247 @@ check('a piece with nowhere valid to snap is left free rather than buried', () =
   const state = p.snapped ? 'snapped to ' + p.snappedFace : 'left free-standing';
   api.selectedItem = p;
   api.deleteSelected();
-  return area < 1 ? `${state}, clear of the splay` : `buried by ${area.toFixed(0)}mm2`;
+  return area < 1 ? `${state}, clear of the splay` : fail(`buried by ${area.toFixed(0)}mm2`);
+});
+
+// ── Units and furniture lying flush along an angled wall ───────────────────
+check('a unit snaps flush along an angled wall', () => {
+  // Clean slate. Earlier tests leave wall pieces and units lying about, and
+  // their faces are snap targets too, so they would compete with the angled
+  // wall and make the result depend on test order.
+  api.applySnapshot({
+    roomW:8220, roomH:5050, roomCeil:2400, roomName:'Angled test',
+    drawnWalls:[], wallPieces:[], roomLabels:[], openings:[], kitchenUnits:[], furniture:[],
+    // A long shallow canted wall, like the one in the user's screenshot.
+    corners:[{rx:0, ry:0, wa:3700, ha:550, rot:0, snapped:'placed'}]
+  });
+  const c = api.corners[0];
+  const h = api.hypOf(c);
+
+  document.getElementById('ku-type').value = 'base';
+  document.getElementById('ku-width').value = '600';
+  api.addKitchenUnit();
+  const ku = api.kitchenUnits[api.kitchenUnits.length-1];
+
+  // Drop it just off the middle of the angled face, on the room side.
+  const midX = (h.p1.x+h.p2.x)/2, midY = (h.p1.y+h.p2.y)/2;
+  ku.cx = midX + h.nx*250;
+  ku.cy = midY + h.ny*250;
+  api.snapBox(ku);
+
+  if(!api.isAngled(ku)){
+    api.selectedItem = ku; api.deleteSelected();
+    return fail(`did not snap to the angled wall (snapType=${ku.snapType} face=${ku.snappedFace})`);
+  }
+  // A 180-degree flip is fine — the box is symmetric along the wall. What must
+  // hold is that u is parallel to the wall and v points into the room.
+  const ax = api.boxAxes(ku);
+  const alongDot = Math.abs(ax.ux*h.ux + ax.uy*h.uy);
+  const intoDot = ax.vx*h.nx + ax.vy*h.ny;
+  const deg = api.boxAngle(ku)*180/Math.PI;
+  return Math.abs(alongDot-1) < 1e-9 && Math.abs(intoDot-1) < 1e-9
+    ? `angle ${deg.toFixed(1)}deg: parallel to the wall, back against it`
+    : fail(`along-wall dot ${alongDot.toFixed(6)} and into-room dot ${intoDot.toFixed(6)} should both be 1`);
+});
+
+check('its back edge sits exactly on the angled face', () => {
+  const ku = api.kitchenUnits[api.kitchenUnits.length-1];
+  const c = ku.snapCorner, h = api.hypOf(c);
+  // Perpendicular distance from each back corner to the hypotenuse line.
+  const cp = api.boxCorners(ku);
+  const dist = p => (p.x-h.p1.x)*h.nx + (p.y-h.p1.y)*h.ny;
+  const back = [dist(cp[0]), dist(cp[1])];
+  const front = [dist(cp[2]), dist(cp[3])];
+  const flush = Math.abs(back[0]) < 0.01 && Math.abs(back[1]) < 0.01;
+  const inRoom = front[0] > 0 && front[1] > 0;
+  return flush && inRoom
+    ? `back corners at ${back.map(d => d.toFixed(3)).join('/')}mm, front at ${front.map(d => Math.round(d)).join('/')}mm into the room`
+    : fail(`back corners ${back.map(d=>d.toFixed(2))} should be 0, front ${front.map(d=>d.toFixed(2))} should be positive`);
+});
+
+check('it does not cut into the solid part of the corner', () => {
+  const ku = api.kitchenUnits[api.kitchenUnits.length-1];
+  const area = api.cornerOverlapArea(api.boxPolygon(ku), ku.snapCorner);
+  return area < 1 ? `penetration ${area.toFixed(3)}mm2` : fail(`penetrating ${area.toFixed(0)}mm2`);
+});
+
+check('the rotated footprint has the right area', () => {
+  const ku = api.kitchenUnits[api.kitchenUnits.length-1];
+  const area = api.polyArea(api.boxCorners(ku));
+  const expect = ku.width*ku.depth;
+  return Math.abs(area-expect) < 1
+    ? `${Math.round(area)}mm2 = ${ku.width}x${ku.depth}`
+    : fail(`${Math.round(area)} vs expected ${expect}`);
+});
+
+check('dragging along the angled wall slides it, keeping it flush', () => {
+  const ku = api.kitchenUnits[api.kitchenUnits.length-1];
+  const c = ku.snapCorner, h = api.hypOf(c);
+  const seen = [];
+  let worstFlush = 0;
+  for(const frac of [0.15, 0.3, 0.5, 0.7, 0.85]){
+    const px = h.p1.x + frac*h.len*h.ux, py = h.p1.y + frac*h.len*h.uy;
+    ku.cx = px + h.nx*(ku.depth/2 + 60);   // a little off the face
+    ku.cy = py + h.ny*(ku.depth/2 + 60);
+    api.snapBox(ku);
+    if(!api.isAngled(ku)) return fail(`lost the angled snap at t=${frac} (snapType=${ku.snapType} face=${ku.snappedFace})`);
+    seen.push(ku.snapT.toFixed(2));
+    for(const p of api.boxCorners(ku).slice(0,2)){
+      worstFlush = Math.max(worstFlush, Math.abs((p.x-h.p1.x)*h.nx + (p.y-h.p1.y)*h.ny));
+    }
+  }
+  return worstFlush < 0.01
+    ? `slid through t = ${seen.join(', ')}, stayed flush within ${worstFlush.toFixed(4)}mm`
+    : fail(`drifted off the face by ${worstFlush.toFixed(2)}mm`);
+});
+
+check('it cannot slide off either end of the angled wall', () => {
+  const ku = api.kitchenUnits[api.kitchenUnits.length-1];
+  const c = ku.snapCorner, h = api.hypOf(c);
+  const halfT = ku.width/2/h.len;
+  const results = [];
+  for(const frac of [-0.5, 0, 1, 1.5]){
+    const px = h.p1.x + frac*h.len*h.ux, py = h.p1.y + frac*h.len*h.uy;
+    ku.cx = px + h.nx*(ku.depth/2);
+    ku.cy = py + h.ny*(ku.depth/2);
+    api.snapBox(ku);
+    if(!api.isAngled(ku)){ results.push(`${frac}:released`); continue; }
+    results.push(`${frac}->${ku.snapT.toFixed(3)}`);
+    if(ku.snapT < halfT - 1e-9 || ku.snapT > 1-halfT + 1e-9) return fail(`t=${ku.snapT} outside [${halfT.toFixed(3)}, ${(1-halfT).toFixed(3)}]`);
+  }
+  return `clamped within the wall: ${results.join(', ')}`;
+});
+
+check('rotating releases it from the angled wall', () => {
+  const ku = api.kitchenUnits[api.kitchenUnits.length-1];
+  api.setBoxRot(ku, (ku.rot ?? 0)+1);
+  const releasedAngle = !api.isAngled(ku);
+  api.snapBox(ku);
+  const res = `angled=${api.isAngled(ku)} face=${ku.snappedFace}`;
+  return releasedAngle ? `released on rotate, then re-snapped: ${res}` : fail('rotate did not release it from the angled wall');
+});
+
+check('gap dimensions along an angled wall reach both ends', () => {
+  const c = api.corners[0], h = api.hypOf(c);
+  document.getElementById('ku-type').value = 'base';
+  document.getElementById('ku-width').value = '600';
+  api.addKitchenUnit();
+  const ku = api.kitchenUnits[api.kitchenUnits.length-1];
+  const px = h.p1.x + 0.5*h.len*h.ux, py = h.p1.y + 0.5*h.len*h.uy;
+  ku.cx = px + h.nx*(ku.depth/2); ku.cy = py + h.ny*(ku.depth/2);
+  api.snapBox(ku);
+  const g = api.boxHypGaps(ku);
+  if(!g) return fail('boxHypGaps returned nothing');
+  const total = g.gapLo + ku.width + g.gapHi;
+  return Math.abs(total - h.len) < 2
+    ? `${g.gapLo} + ${ku.width} + ${g.gapHi} = ${Math.round(total)}mm, wall is ${Math.round(h.len)}mm`
+    : fail(`${g.gapLo} + ${ku.width} + ${g.gapHi} = ${Math.round(total)} but the wall is ${Math.round(h.len)}`);
+});
+
+check('two units on the same angled wall measure the gap between them', () => {
+  const c = api.corners[0], h = api.hypOf(c);
+  const first = api.kitchenUnits[api.kitchenUnits.length-1];
+  document.getElementById('ku-width').value = '400';
+  api.addKitchenUnit();
+  const second = api.kitchenUnits[api.kitchenUnits.length-1];
+  // Place the second one further along, leaving a gap.
+  const t2 = first.snapT + (first.width/2 + 300 + 200)/h.len;
+  const px = h.p1.x + t2*h.len*h.ux, py = h.p1.y + t2*h.len*h.uy;
+  second.cx = px + h.nx*(second.depth/2); second.cy = py + h.ny*(second.depth/2);
+  api.snapBox(second);
+  const g = api.boxHypGaps(second);
+  const ok = g && g.gapLo > 0 && g.gapLo < 400;
+  const res = g ? `gap to neighbour ${g.gapLo}mm, to the far end ${g.gapHi}mm` : 'none';
+  api.selectedItem = second; api.deleteSelected();
+  return ok ? res : fail(`unexpected: ${res}`);
+});
+
+check('an angled unit appears in that wall\'s elevation', () => {
+  api.refreshElevWalls();
+  const sel = document.getElementById('elev-wall');
+  const cornerOpt = sel.options.find
+    ? sel.options.find(o => String(o.value).startsWith('corner-'))
+    : [...sel.options].filter(o => String(o.value).startsWith('corner-'))[0];
+  if(!cornerOpt) return fail(`no angled wall option (options: ${[...sel.options].map(o=>o.value).join(',')})`);
+  sel.value = cornerOpt.value;
+  const info = api.elevInfo();
+  if(info.kind !== 'corner') return fail(`elevInfo gave kind=${info.kind}`);
+  const items = api.elevItems(info);
+  api.setView('elev');
+  api.drawElevation();
+  api.setView('plan');
+  sel.value = 'top';
+  return items.length
+    ? `${info.name}, ${Math.round(info.len)}mm long, ${items.length} item(s): ${items.map(i => i.label).join(', ')}`
+    : fail('the angled wall elevation listed nothing');
+});
+
+check('an angled unit survives save and load', () => {
+  const before = api.kitchenUnits.filter(k => api.isAngled(k));
+  if(!before.length) return fail('there was no angled unit to test with');
+  const ref = before[0];
+  const snap = {t:ref.snapT, angle:ref.angle, cx:ref.cx, cy:ref.cy, cornerIdx:api.corners.indexOf(ref.snapCorner)};
+  const data = JSON.parse(JSON.stringify(api.roomData()));
+  api.applySnapshot(data);
+  const after = api.kitchenUnits.filter(k => api.isAngled(k));
+  if(after.length !== before.length) return fail(`${before.length} angled before, ${after.length} after`);
+  const a = after[0];
+  const sameCorner = api.corners.indexOf(a.snapCorner) === snap.cornerIdx;
+  const samePlace = Math.abs(a.cx-snap.cx) < 0.01 && Math.abs(a.cy-snap.cy) < 0.01;
+  const liveRef = api.corners.includes(a.snapCorner);
+  return sameCorner && samePlace && liveRef
+    ? `re-linked to corner ${snap.cornerIdx}, position and angle preserved`
+    : fail(`corner=${sameCorner} place=${samePlace} liveRef=${liveRef}`);
+});
+
+check('a corner-snapped door survives save and load', () => {
+  const c = api.corners[0], h = api.hypOf(c);
+  api.addDoor();
+  const d = api.openings[api.openings.length-1];
+  d.cx = (h.p1.x+h.p2.x)/2; d.cy = (h.p1.y+h.p2.y)/2;
+  api.snapDoor(d);
+  if(d.snapType !== 'corner') return fail(`door did not snap to the corner (type=${d.snapType})`);
+  const beforeT = d.snapT;
+  const data = JSON.parse(JSON.stringify(api.roomData()));
+  api.applySnapshot(data);
+  const after = api.openings.filter(o => o.snapType === 'corner');
+  if(!after.length) return fail('the corner-snapped door was lost on reload');
+  const a = after[after.length-1];
+  return api.corners.includes(a.snapCorner) && Math.abs(a.snapT-beforeT) < 1e-9
+    ? `re-linked, still at t=${a.snapT.toFixed(3)} with a live corner reference`
+    : fail(`snapCorner live=${api.corners.includes(a.snapCorner)} t=${a.snapT} vs ${beforeT}`);
+});
+
+check('undo no longer unsnaps corner-snapped items', () => {
+  const angledBefore = api.kitchenUnits.filter(k => api.isAngled(k)).length;
+  const doorsBefore = api.openings.filter(o => o.snapType === 'corner').length;
+  api.pushHistory();
+  api.addWallPiece();          // an unrelated change
+  api.undo();
+  const angledAfter = api.kitchenUnits.filter(k => api.isAngled(k)).length;
+  const doorsAfter = api.openings.filter(o => o.snapType === 'corner').length;
+  return angledAfter === angledBefore && doorsAfter === doorsBefore
+    ? `${angledAfter} angled unit(s) and ${doorsAfter} corner door(s) intact through undo`
+    : fail(`angled ${angledBefore}->${angledAfter}, doors ${doorsBefore}->${doorsAfter}`);
+});
+
+check('clipByConvex intersects two rotated rectangles', () => {
+  const sq = [{x:0,y:0},{x:100,y:0},{x:100,y:100},{x:0,y:100}];
+  // A square of the same size turned 45 degrees about the shared centre.
+  // Turned 45 degrees about the shared centre, so its corners land on the
+  // axes through the centre rather than back on the original corners.
+  const r = 50*Math.SQRT2;
+  const dia = [0,1,2,3].map(i => ({
+    x:50 + r*Math.cos(i*Math.PI/2),
+    y:50 + r*Math.sin(i*Math.PI/2)
+  }));
+  const area = api.polyArea(api.clipByConvex(dia, sq));
+  // The intersection of a square and its 45-degree rotation is a regular
+  // octagon of area 2*(sqrt(2)-1)*s^2.
+  const expect = 2*(Math.SQRT2-1)*100*100;
+  return Math.abs(area-expect) < 1
+    ? `${Math.round(area)}mm2, matches the expected octagon`
+    : fail(`${Math.round(area)} vs expected ${Math.round(expect)}`);
 });
 
 check('straight-wall snapping is unchanged when no corner is involved', () => {
@@ -409,7 +660,7 @@ check('straight-wall snapping is unchanged when no corner is involved', () => {
   api.selectedItem = p;
   api.deleteSelected();
   return ok ? 'still snaps to the nearest wall, top edge at y=0'
-            : `snapped=${p.snapped} face=${p.snappedFace} y1=${bb.y1}`;
+            : fail(`snapped=${p.snapped} face=${p.snappedFace} y1=${bb.y1}`);
 });
 
 // Undo behaviour: the historic off-by-one bug.
@@ -419,7 +670,7 @@ check('undo steps back one real change', () => {
   const n1 = api.kitchenUnits.length;
   api.undo();
   const n2 = api.kitchenUnits.length;
-  return (n1 === n0+1 && n2 === n0) ? `${n0} -> ${n1} -> undo -> ${n2}` : `${n0} -> ${n1} -> undo -> ${n2}`;
+  return (n1 === n0+1 && n2 === n0) ? `${n0} -> ${n1} -> undo -> ${n2}` : fail(`${n0} -> ${n1} -> undo -> ${n2}, expected ${n0} -> ${n0+1} -> ${n0}`);
 });
 check('redo reapplies it', () => {
   const before = api.kitchenUnits.length;
@@ -428,13 +679,29 @@ check('redo reapplies it', () => {
 });
 
 check('wall chain splits at objects', () => {
+  // Build the fixture rather than relying on what earlier tests left behind.
+  api.applySnapshot({
+    roomW:8220, roomH:5050, roomCeil:2400,
+    drawnWalls:[], corners:[], roomLabels:[], kitchenUnits:[], furniture:[], openings:[],
+    wallPieces:[{cx:2000, cy:500, len:1000, thick:200, horiz:false,
+                 snapped:true, snappedFace:'top', anchorWallCoord:0, orientationLocked:true}]
+  });
+  api.addDoor();
+  const d = api.openings[0];
+  d.cx = 5000; d.cy = 30;
+  api.snapDoor(d);
   const c = api.wallChain('top');
-  return c.segs.length >= 2 ? `${c.segs.length} segments, gaps=${c.segs.filter(s=>s.isGap).length}` : `${c.segs.length} segments`;
+  const spans = c.segs.map(s => Math.round(s.mmB-s.mmA) + (s.isGap ? '(gap)' : ''));
+  // Expect: clear run, the 200mm piece as a gap, clear run, the 900mm door as a
+  // gap, clear run to the far corner.
+  return c.segs.length >= 4
+    ? `${c.segs.length} segments: ${spans.join(' + ')}`
+    : fail(`only ${c.segs.length} segment(s): ${spans.join(' + ')}`);
 });
 check('wall chain segments sum to the wall length', () => {
   const c = api.wallChain('bottom');
   const sum = c.segs.reduce((n,s) => n + (s.mmB-s.mmA), 0);
-  return Math.abs(sum - api.roomW) < 30 ? `sum=${Math.round(sum)} of ${api.roomW}` : `sum=${Math.round(sum)} of ${api.roomW}`;
+  return Math.abs(sum - api.roomW) < 30 ? `sum=${Math.round(sum)} of ${api.roomW}` : fail(`segments sum to ${Math.round(sum)} but the wall is ${api.roomW}`);
 });
 
 check('schedule computes', () => {
@@ -446,7 +713,7 @@ check('worktop run counts base and island units only', () => {
   const s = api.computeSchedule();
   const bases = api.kitchenUnits.filter(k => k.kuType === 'base' || k.kuType === 'island');
   const expect = bases.reduce((n,k) => n+k.width, 0);
-  return s.worktopMm === expect ? `${s.worktopMm}mm from ${bases.length} units` : `got ${s.worktopMm}, expected ${expect}`;
+  return s.worktopMm === expect ? `${s.worktopMm}mm from ${bases.length} units` : fail(`got ${s.worktopMm}, expected ${expect}`);
 });
 check('net wall area subtracts openings', () => {
   const s = api.computeSchedule();
@@ -458,7 +725,7 @@ check('plan renders without throwing', () => { api.drawPlan(); return true; });
 check('elevation lists items on the top wall', () => {
   document.getElementById('elev-wall').value = 'top';
   const items = api.elevItems(api.elevInfo());
-  return items.length ? items.map(i => `${i.label}@${i.z1}-${i.z2}`).join(', ') : 'none';
+  return items.length ? items.map(i => `${i.label}@${i.z1}-${i.z2}`).join(', ') : fail('the top wall elevation listed nothing');
 });
 check('elevation renders without throwing', () => { api.setView('elev'); api.drawElevation(); api.setView('plan'); return true; });
 check('elevation mirrors the two far walls', () => {
@@ -472,7 +739,7 @@ check('save data round-trips through applySnapshot', () => {
   const counts = [api.wallPieces.length, api.kitchenUnits.length, api.furniture.length, api.openings.length];
   api.applySnapshot(data);
   const after = [api.wallPieces.length, api.kitchenUnits.length, api.furniture.length, api.openings.length];
-  return counts.join(',') === after.join(',') ? `counts ${after.join('/')}` : `${counts} vs ${after}`;
+  return counts.join(',') === after.join(',') ? `counts ${after.join('/')}` : fail(`${counts} vs ${after}`);
 });
 
 check('a v1 file with legacy opening fields still loads', () => {
@@ -499,7 +766,7 @@ check('autosave writes and restores', () => {
   if(!raw) return false;
   api.applySnapshot({roomW:1000, roomH:1000, wallPieces:[], corners:[], openings:[], roomLabels:[], kitchenUnits:[], furniture:[], drawnWalls:[]});
   const ok = api.restoreAutosave();
-  return ok && api.roomW === 4000 ? `restored roomW=${api.roomW}` : `ok=${ok} roomW=${api.roomW}`;
+  return ok && api.roomW === 4000 ? `restored roomW=${api.roomW}` : fail(`ok=${ok} roomW=${api.roomW}`);
 });
 
 // ── PDF ────────────────────────────────────────────────────────────────────
@@ -514,7 +781,41 @@ check('PDF picks a bigger sheet for a big room at 1:20', () => {
 check('PDF bytes are a valid single-document structure', () => {
   const p = api.planPage(50);
   const blob = api.buildPdf([p, api.schedulePage()], {title:'test'});
-  return blob.size > 2000 ? `${blob.size} bytes` : `only ${blob.size} bytes`;
+  return blob.size > 2000 ? `${blob.size} bytes` : fail(`only ${blob.size} bytes`);
+});
+
+check('the PDF draws an angled unit as a rotated outline, on the page', () => {
+  api.applySnapshot({
+    roomW:8220, roomH:5050, roomCeil:2400, roomName:'Angled PDF',
+    drawnWalls:[], wallPieces:[], roomLabels:[], openings:[], kitchenUnits:[], furniture:[],
+    corners:[{rx:0, ry:0, wa:3700, ha:550, rot:0, snapped:'placed'}]
+  });
+  const h = api.hypOf(api.corners[0]);
+  document.getElementById('ku-type').value = 'base';
+  document.getElementById('ku-width').value = '600';
+  api.addKitchenUnit();
+  const ku = api.kitchenUnits[0];
+  const px = h.p1.x + 0.5*h.len*h.ux, py = h.p1.y + 0.5*h.len*h.uy;
+  ku.cx = px + h.nx*(ku.depth/2); ku.cy = py + h.ny*(ku.depth/2);
+  api.snapBox(ku);
+  if(!api.isAngled(ku)) return fail('the unit did not take the angled snap');
+
+  const p = api.planPage(50);
+  // A rotated box is a move plus three lines closed with h, not a re rect.
+  const closedPaths = (p.content.match(/^[-\d.]+ [-\d.]+ m\n(?:[-\d.]+ [-\d.]+ l\n){3}h$/gm) || []).length;
+  // Every coordinate must still land inside the MediaBox.
+  let outside = 0, pts = 0;
+  for(const line of p.content.split('\n')){
+    const m = /^([-\d.]+) ([-\d.]+) (?:m|l)$/.exec(line);
+    if(!m) continue;
+    pts++;
+    const x = +m[1], y = +m[2];
+    if(x < -2 || y < -2 || x > p.w+2 || y > p.h+2) outside++;
+  }
+  if(!closedPaths) return fail('no closed rotated path found in the content stream');
+  if(outside) return fail(`${outside} of ${pts} coordinates fall outside the page`);
+  const blob = api.buildPdf([p], {title:'angled'});
+  return `${closedPaths} rotated path(s), ${pts} coordinates all on the page, ${blob.size} byte PDF`;
 });
 
 // The user's real saved room, straight from the backup folder.
@@ -558,27 +859,27 @@ check('and exports to PDF', () => {
   check('every object is terminated', () => {
     const objs = (txt.match(/^\d+ 0 obj$/gm) || []).length;
     const ends = (txt.match(/^endobj$/gm) || []).length;
-    return objs === ends && objs > 0 ? `${objs} objects` : `${objs} obj vs ${ends} endobj`;
+    return objs === ends && objs > 0 ? `${objs} objects` : fail(`${objs} obj vs ${ends} endobj`);
   });
   check('stream lengths match their declared /Length', () => {
     const re = /<< \/Length (\d+) >>\nstream\n([\s\S]*?)\nendstream/g;
     let m, n = 0;
     while((m = re.exec(txt))){
       n++;
-      if(m[2].length !== parseInt(m[1],10)) return `stream ${n}: declared ${m[1]}, actual ${m[2].length}`;
+      if(m[2].length !== parseInt(m[1],10)) return fail(`stream ${n}: declared ${m[1]}, actual ${m[2].length}`);
     }
-    return n ? `${n} streams verified` : 'no streams found';
+    return n ? `${n} streams verified` : fail('no streams found in the PDF');
   });
   check('xref offsets land on their object headers', () => {
     const xrefPos = txt.lastIndexOf('\nxref\n');
     const startxref = parseInt(/startxref\s+(\d+)/.exec(txt)[1], 10);
-    if(startxref !== xrefPos + 1) return `startxref ${startxref} but xref at ${xrefPos+1}`;
+    if(startxref !== xrefPos + 1) return fail(`startxref ${startxref} but xref at ${xrefPos+1}`);
     const rows = txt.slice(xrefPos).match(/^(\d{10}) 00000 n $/gm) || [];
     for(let i=0; i<rows.length; i++){
       const off = parseInt(rows[i].slice(0,10), 10);
       const expect = `${i+1} 0 obj`;
       if(txt.slice(off, off+expect.length) !== expect){
-        return `object ${i+1}: offset ${off} points at "${txt.slice(off, off+20).replace(/\n/g,'\\n')}"`;
+        return fail(`object ${i+1}: offset ${off} points at "${txt.slice(off, off+20).replace(/\n/g,'\\n')}"`);
       }
     }
     return `${rows.length} offsets verified`;
@@ -587,13 +888,13 @@ check('and exports to PDF', () => {
     const stream = /stream\n([\s\S]*?)\nendstream/.exec(txt)[1];
     const q = (stream.match(/^q$/gm) || []).length;
     const Q = (stream.match(/^Q$/gm) || []).length;
-    return q === Q ? `${q} save/restore pairs` : `${q} q vs ${Q} Q`;
+    return q === Q ? `${q} save/restore pairs` : fail(`${q} q vs ${Q} Q`);
   });
   check('content stream has balanced BT/ET pairs', () => {
     const stream = /stream\n([\s\S]*?)\nendstream/.exec(txt)[1];
     const bt = (stream.match(/^BT$/gm) || []).length;
     const et = (stream.match(/^ET$/gm) || []).length;
-    return bt === et && bt > 0 ? `${bt} text objects` : `${bt} BT vs ${et} ET`;
+    return bt === et && bt > 0 ? `${bt} text objects` : fail(`${bt} BT vs ${et} ET`);
   });
   check('no unescaped parentheses inside text strings', () => {
     const bad = [];
@@ -606,7 +907,7 @@ check('and exports to PDF', () => {
       const stripped = inner.replace(/\\[()\\]/g, '');
       if(/[()]/.test(stripped)) bad.push(inner);
     }
-    return bad.length ? `${bad.length} bad: ${bad[0]}` : 'all clean';
+    return bad.length ? fail(`${bad.length} bad: ${bad[0]}`) : 'all clean';
   });
 
   fs.writeFileSync(process.argv[2] || 'out.pdf', buf);

@@ -26,11 +26,16 @@ wall. Click any dimension label to type an exact value — gaps perpendicular to
 wall resize the piece, gaps along the wall slide it.
 
 **Angled corners** are right-angled triangles with a rotatable anchor. Dimensions show
-the gap from each leg tip to the next surface beyond it. They are treated as solid:
-wall pieces, kitchen units and furniture all stop flush against a splay rather than
-sliding through it, and gap dimensions measure to the splay. Note that boxes stay
-axis-aligned — they stop *at* an angled face, they do not lie *along* it. Only doors
-can follow a hypotenuse.
+the gap from each leg tip to the next surface beyond it. They are solid: wall pieces
+stop flush against a splay rather than sliding through it, and gap dimensions measure
+to the splay.
+
+Kitchen units and furniture can also **sit flush along** an angled face, turned to
+match it. Drag one near the angled wall and it snaps to the angle, slides along it,
+and clamps at each end. Its dimensions are then measured along that wall. Rotate
+releases it back to the square walls. Angled walls also appear in the elevation
+selector, so you can see what is against them at true heights. Wall pieces remain
+square to the room; only units, furniture and doors follow an angle.
 
 **Doors and windows** spawn floating in the middle of the room and snap when dragged to
 a wall — including to the hypotenuse of an angled corner. Doors draw a leaf and a
@@ -97,6 +102,11 @@ Three stages, no dependencies:
   redo, rotation, the schedule maths, elevation for all four walls, save round-trips,
   loading a v15 file, autosave, and PDF generation. Includes byte-level validation of
   the PDF (xref offsets, stream lengths, balanced `q`/`Q` and `BT`/`ET`, string escaping).
+
+  A test signals failure with `fail('why')`. Returning a bare string is a *pass* with a
+  note. This distinction matters: the harness originally treated any non-`false` return
+  as a pass, so several tests that returned a description of what had gone wrong were
+  reported green. If you add a test, every negative branch must go through `fail()`.
 - **`pdfcheck.js`** — parses the generated PDF's content streams and confirms every
   coordinate lands inside the page box.
 

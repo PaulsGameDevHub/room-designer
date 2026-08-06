@@ -507,18 +507,53 @@ function nearestObstacle(bb, excludeP){
 const boxes = () => kitchenUnits.concat(furniture);
 const boxSpec = b => b.type === 'kitchen' ? KU_SPECS[b.kuType] : FURN_SPECS[b.fType];
 
+// A box either sits square to the room, in which case rot says which way its
+// back faces, or lies flush along an angled corner, in which case angle does.
+// u runs along the wall, v points away from it into the room.
+const isAngled = b => b.snapType === 'corner' && b.angle !== undefined && b.angle !== null;
+const boxAngle = b => isAngled(b) ? b.angle : -(b.rot ?? 0)*Math.PI/2;
+function boxAxes(b){
+  const a = boxAngle(b), ca = Math.cos(a), sa = Math.sin(a);
+  return {ux:ca, uy:sa, vx:-sa, vy:ca};
+}
+function boxCorners(b){
+  const {ux,uy,vx,vy} = boxAxes(b);
+  const hw = b.width/2, hd = b.depth/2;
+  return [
+    {x:b.cx - hw*ux - hd*vx, y:b.cy - hw*uy - hd*vy},
+    {x:b.cx + hw*ux - hd*vx, y:b.cy + hw*uy - hd*vy},
+    {x:b.cx + hw*ux + hd*vx, y:b.cy + hw*uy + hd*vy},
+    {x:b.cx - hw*ux + hd*vx, y:b.cy - hw*uy + hd*vy},
+  ];
+}
+// Axis-aligned bounds. Square boxes keep the original arithmetic exactly, so
+// none of the existing snapping or dimension numbers shift.
 function boxBB(b){
-  const hw = b.horiz ? b.width/2 : b.depth/2;
-  const hd = b.horiz ? b.depth/2 : b.width/2;
-  return {x1:b.cx-hw, y1:b.cy-hd, x2:b.cx+hw, y2:b.cy+hd};
+  if(!isAngled(b)){
+    const hw = b.horiz ? b.width/2 : b.depth/2;
+    const hd = b.horiz ? b.depth/2 : b.width/2;
+    return {x1:b.cx-hw, y1:b.cy-hd, x2:b.cx+hw, y2:b.cy+hd};
+  }
+  const pts = boxCorners(b);
+  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+  return {x1:Math.min(...xs), y1:Math.min(...ys), x2:Math.max(...xs), y2:Math.max(...ys)};
 }
 function clampBoxToRoom(b){
+  // An angled box is positioned by its place along the hypotenuse, not by
+  // independent x and y, so leave it to anchorBox.
+  if(isAngled(b)) return;
   const hw = b.horiz ? b.width/2 : b.depth/2;
   const hd = b.horiz ? b.depth/2 : b.width/2;
   b.cx = clamp(b.cx, hw, roomW-hw);
   b.cy = clamp(b.cy, hd, roomH-hd);
 }
 function anchorBox(b){
+  if(isAngled(b)){
+    // Re-seat on the hypotenuse, which also re-clamps for a new width or depth.
+    if(corners.includes(b.snapCorner)) placeBoxOnHyp(b, b.snapCorner, b.snapT);
+    else { b.snapType = null; b.angle = null; b.snapCorner = null; b.snapped = false; }
+    return;
+  }
   if(!b.snappedFace){ clampBoxToRoom(b); return; }
   const halfY = b.horiz ? b.depth/2 : b.width/2;
   const halfX = b.horiz ? b.width/2 : b.depth/2;
@@ -536,25 +571,33 @@ const ROT_TO_FACE = ['top','left','bottom','right'];
 function setBoxRot(b, rot){
   b.rot = ((rot % 4) + 4) % 4;
   b.horiz = b.rot % 2 === 0;
-  // Turning an item releases it from its wall; the following snapBox re-seats
-  // it against whichever wall its new back now faces.
+  // Turning an item releases it from its wall — including an angled one, so
+  // rotating is how you get a box off a splay. The following snapBox re-seats it
+  // against whichever surface its new back now faces.
+  unsnapBox(b);
+}
+
+function unsnapBox(b){
   b.snapped = false;
   b.snappedFace = null;
+  b.snapType = null;
+  b.snapCorner = null;
+  b.angle = null;
 }
 
 function snapBox(b){
   const startX = b.cx, startY = b.cy;
 
   if(!b.snapToWall){
+    unsnapBox(b);
     clampBoxToRoom(b);
-    b.snapped = false;
-    b.snappedFace = null;
     slideBoxClear(b, ['x','y']);
     return;
   }
 
-  // Every wall within reach, nearest face first. With no angled corners in the
-  // way the first candidate always wins, which is the original behaviour.
+  // Every surface within reach, nearest first — the four room walls, the faces
+  // of other wall pieces, and the angled face of every corner. With no angled
+  // corners about the first candidate always wins, as it did before.
   const hd = b.depth/2;
   const candidates = [];
   for(const e of allSnapEdges(-1)){
@@ -567,11 +610,35 @@ function snapBox(b){
       candidates.push({d:Math.abs(b.cx + hd - e.coord), coord:e.coord, face:'right', horiz:false});
     }
   }
+  for(const c of corners){
+    if(!c.snapped) continue;
+    const h = hypOf(c);
+    if(!h || b.width >= h.len) continue;
+    const rx = b.cx - h.p1.x, ry = b.cy - h.p1.y;
+    const along = rx*h.ux + ry*h.uy;
+    const perp  = rx*h.nx + ry*h.ny;      // positive means on the room side
+    const t = along/h.len;
+    if(t < -0.25 || t > 1.25) continue;   // not really alongside this wall
+    if(perp <= 0) continue;               // behind the face, inside the solid
+    candidates.push({d:Math.abs(perp - hd), kind:'corner', corner:c, t:clamp(t, 0, 1)});
+  }
   candidates.sort((p,q) => p.d - q.d);
 
   for(const cand of candidates){
     if(cand.d >= BOX_SNAP_MM) break;
     b.cx = startX; b.cy = startY;
+
+    if(cand.kind === 'corner'){
+      b.rot = 0; b.horiz = true;
+      if(!placeBoxOnHyp(b, cand.corner, cand.t)) continue;
+      // Flush contact reads as zero overlap, so this only rejects real burial.
+      if(clearOfCorners(b, boxPolygon) && boxInsideRoom(b)) return;
+      continue;
+    }
+
+    b.snapType = 'axis';
+    b.snapCorner = null;
+    b.angle = null;
     b.horiz = cand.horiz;
     b.snappedFace = cand.face;
     b.rot = FACE_TO_ROT[cand.face];
@@ -583,14 +650,66 @@ function snapBox(b){
     if(slideBoxClear(b, [alongAxisFor(cand.face)])) return;
   }
 
-  // No wall works, so leave it free-standing where the user put it.
+  // Nothing works, so leave it free-standing where the user put it.
   b.cx = startX; b.cy = startY;
-  b.snapped = false;
-  b.snappedFace = null;
+  unsnapBox(b);
   clampBoxToRoom(b);
   slideBoxClear(b, ['x','y']);
 }
-const ptInBox = (mx,my,b) => { const bb = boxBB(b); return mx>=bb.x1 && mx<=bb.x2 && my>=bb.y1 && my<=bb.y2; };
+function ptInBox(mx, my, b){
+  if(!isAngled(b)){
+    const bb = boxBB(b);
+    return mx>=bb.x1 && mx<=bb.x2 && my>=bb.y1 && my<=bb.y2;
+  }
+  // Rotated: measure in the box's own frame.
+  const {ux,uy,vx,vy} = boxAxes(b);
+  const dx = mx-b.cx, dy = my-b.cy;
+  return Math.abs(dx*ux + dy*uy) <= b.width/2 && Math.abs(dx*vx + dy*vy) <= b.depth/2;
+}
+
+// ── Snapping flush along an angled corner ──────────────────────────────────
+
+// The hypotenuse of a corner, plus the inward normal — the room is on the
+// opposite side from the corner's own anchor, which is the solid apex.
+function hypOf(c){
+  const geo = cornerGeometry(c);
+  const p1 = geo[1], p2 = geo[2];
+  const len = Math.hypot(p2.x-p1.x, p2.y-p1.y);
+  if(len < 1) return null;
+  const ux = (p2.x-p1.x)/len, uy = (p2.y-p1.y)/len;
+  // Left normal, flipped if it points back at the apex.
+  let nx = -uy, ny = ux;
+  if((c.rx-p1.x)*nx + (c.ry-p1.y)*ny > 0){ nx = -nx; ny = -ny; }
+  return {p1, p2, len, ux, uy, nx, ny, angle:Math.atan2(uy, ux)};
+}
+
+// Seat a box flush on a corner's hypotenuse at position t along it.
+function placeBoxOnHyp(b, c, t){
+  const h = hypOf(c);
+  if(!h) return false;
+  const half = b.width/2/h.len;
+  if(half >= 0.5) return false;          // wider than the angled wall itself
+  b.snapType = 'corner';
+  b.snapCorner = c;
+  b.snapT = clamp(t, half, 1-half);
+  b.snapped = true;
+  b.snappedFace = null;
+  b.angle = h.angle;
+  // The stored angle assumes v points into the room; hypOf guarantees that.
+  const {vx, vy} = boxAxes(b);
+  if(vx*h.nx + vy*h.ny < 0) b.angle += Math.PI;
+  const along = b.snapT*h.len;
+  const px = h.p1.x + along*h.ux, py = h.p1.y + along*h.uy;
+  const a2 = boxAxes(b);
+  b.cx = px + a2.vx*b.depth/2;
+  b.cy = py + a2.vy*b.depth/2;
+  return true;
+}
+
+// Does the whole footprint sit inside the room?
+function boxInsideRoom(b){
+  return boxPolygon(b).every(p => p.x >= -0.5 && p.x <= roomW+0.5 && p.y >= -0.5 && p.y <= roomH+0.5);
+}
 
 // ── Angled corners as solid obstacles ──────────────────────────────────────
 //
@@ -633,37 +752,80 @@ function cornerShadow(c, alongAxis, depthLo, depthHi){
   return {lo:Math.min(...vals), hi:Math.max(...vals)};
 }
 
-// Exact area of overlap between a corner triangle and a box footprint, in mm².
-// Sitting flush against the splay gives zero, so only real penetration counts.
-function cornerOverlapArea(bb, c){
-  let poly = clipToSlab(cornerGeometry(c), 'x', bb.x1, bb.x2);
-  if(!poly.length) return 0;
-  poly = clipToSlab(poly, 'y', bb.y1, bb.y2);
-  if(!poly.length) return 0;
+// ── General convex polygon clipping ────────────────────────────────────────
+// Needed because a box lying along an angled wall is no longer axis-aligned.
+
+const signedArea2 = poly => {
   let a = 0;
   for(let i=0; i<poly.length; i++){
     const p = poly[i], q = poly[(i+1) % poly.length];
     a += p.x*q.y - q.x*p.y;
   }
-  return Math.abs(a)/2;
+  return a;
+};
+const polyArea = poly => Math.abs(signedArea2(poly))/2;
+const bbPoly = bb => [
+  {x:bb.x1, y:bb.y1}, {x:bb.x2, y:bb.y1}, {x:bb.x2, y:bb.y2}, {x:bb.x1, y:bb.y2}
+];
+
+// Keep the part of poly on the left of the directed edge a→b.
+function clipToEdge(poly, a, b){
+  const side = p => (b.x-a.x)*(p.y-a.y) - (b.y-a.y)*(p.x-a.x);
+  const out = [];
+  for(let i=0; i<poly.length; i++){
+    const p = poly[i], q = poly[(i+1) % poly.length];
+    const sp = side(p), sq = side(q);
+    if(sp >= 0) out.push(p);
+    if((sp >= 0) !== (sq >= 0)){
+      const t = sp/(sp-sq);
+      out.push({x:p.x + (q.x-p.x)*t, y:p.y + (q.y-p.y)*t});
+    }
+  }
+  return out;
 }
+// Intersection of a polygon with a convex clipper.
+function clipByConvex(poly, clipper){
+  // Orient the clipper so that "left of each edge" means inside it.
+  const cl = signedArea2(clipper) < 0 ? [...clipper].reverse() : clipper;
+  let out = poly;
+  for(let i=0; i<cl.length && out.length; i++){
+    out = clipToEdge(out, cl[i], cl[(i+1) % cl.length]);
+  }
+  return out;
+}
+
+// Exact area of overlap between a corner triangle and a footprint polygon, in
+// mm². Sitting flush against the splay gives zero, so only real penetration
+// counts. Works for square and angled boxes alike.
+function cornerOverlapArea(poly, c){
+  if(!Array.isArray(poly)) poly = bbPoly(poly);   // callers may pass a bounds object
+  const hit = clipByConvex(cornerGeometry(c), poly);
+  return hit.length < 3 ? 0 : polyArea(hit);
+}
+// The footprint of a box, as a polygon.
+const boxPolygon = b => isAngled(b) ? boxCorners(b) : bbPoly(boxBB(b));
 // Wall pieces and boxes are both positioned by cx/cy, so the corner-clearing
 // logic is shared; only the footprint and the room clamp differ.
-function clearOfCorners(item, bbOf){
-  const bb = bbOf(item);
-  return corners.every(c => !c.snapped || cornerOverlapArea(bb, c) < 1);
+const aabbOf = poly => {
+  const xs = poly.map(p => p.x), ys = poly.map(p => p.y);
+  return {x1:Math.min(...xs), y1:Math.min(...ys), x2:Math.max(...xs), y2:Math.max(...ys)};
+};
+function clearOfCorners(item, polyOf){
+  const poly = polyOf(item);
+  return corners.every(c => !c.snapped || cornerOverlapArea(poly, c) < 1);
 }
 
 // Slide an item clear of every angled corner, moving only along the given axes.
 // Returns whether it ended up clear — something snapped to a wall is restricted
 // to that wall, so sometimes it simply cannot be.
-function slideClearOfCorners(item, axes, bbOf, clampFn){
+function slideClearOfCorners(item, axes, polyOf, clampFn){
   for(let pass=0; pass<3; pass++){
     let moved = false;
     for(const c of corners){
       if(!c.snapped) continue;
-      const bb = bbOf(item);
-      if(cornerOverlapArea(bb, c) < 1) continue;
+      const poly = polyOf(item);
+      if(cornerOverlapArea(poly, c) < 1) continue;
+      const bb = aabbOf(poly);
       let best = null;
       for(const axis of axes){
         const depthKey = axis === 'x' ? 'y' : 'x';
@@ -682,10 +844,11 @@ function slideClearOfCorners(item, axes, bbOf, clampFn){
     }
     if(!moved) break;
   }
-  return clearOfCorners(item, bbOf);
+  return clearOfCorners(item, polyOf);
 }
-const slideBoxClear   = (b, axes) => slideClearOfCorners(b, axes, boxBB, clampBoxToRoom);
-const slidePieceClear = (p, axes) => slideClearOfCorners(p, axes, wpBB, clampToRoom);
+const piecePolygon    = p => bbPoly(wpBB(p));
+const slideBoxClear   = (b, axes) => slideClearOfCorners(b, axes, boxPolygon, clampBoxToRoom);
+const slidePieceClear = (p, axes) => slideClearOfCorners(p, axes, piecePolygon, clampToRoom);
 
 // The along-wall axis for a given snapped face.
 const alongAxisFor = face => (face === 'top' || face === 'bottom') ? 'x' : 'y';
@@ -697,6 +860,7 @@ function settlePiece(p){
   slidePieceClear(p, p.snapped && p.snappedFace ? [alongAxisFor(p.snappedFace)] : ['x','y']);
 }
 function settleBox(b){
+  if(isAngled(b)){ anchorBox(b); return; }   // the hypotenuse governs its place
   clampBoxToRoom(b);
   slideBoxClear(b, b.snapped && b.snappedFace ? [alongAxisFor(b.snappedFace)] : ['x','y']);
 }
@@ -722,6 +886,15 @@ function boxNearestObjects(b, bb){
     if(!op.snapped) continue;
     const ob = openingBB(op);
     if(!ob) continue;
+    obstacles.push(alongH ? {lo:ob.x1, hi:ob.x2} : {lo:ob.y1, hi:ob.y2});
+  }
+  // Boxes lying along an angled wall are not on any face, but they still block
+  // the run, so contribute their bounding extent.
+  for(const other of boxes()){
+    if(other === b || !isAngled(other)) continue;
+    const ob = boxBB(other);
+    const depthKey = alongH ? 'y' : 'x';
+    if(ob[depthKey+'2'] < bb[depthKey+'1'] || ob[depthKey+'1'] > bb[depthKey+'2']) continue;
     obstacles.push(alongH ? {lo:ob.x1, hi:ob.x2} : {lo:ob.y1, hi:ob.y2});
   }
   // Angled corners block a slice of the wall, so a gap should measure to the
@@ -1125,7 +1298,50 @@ function drawDrawnWallDims(w, isSel){
   }
 }
 
+// Gaps for a box lying along an angled wall, measured along that wall to its
+// ends and to any neighbour sharing it.
+function boxHypGaps(b){
+  const c = b.snapCorner;
+  if(!corners.includes(c)) return null;
+  const h = hypOf(c);
+  if(!h) return null;
+  const centre = b.snapT*h.len, half = b.width/2;
+  const lo = centre-half, hi = centre+half;
+  let nearLo = 0, nearHi = h.len;
+
+  const consider = (oc, oHalf) => {
+    const oLo = oc-oHalf, oHi = oc+oHalf;
+    if(oHi <= lo + 0.5 && oHi > nearLo) nearLo = oHi;
+    if(oLo >= hi - 0.5 && oLo < nearHi) nearHi = oLo;
+  };
+  for(const o of boxes()){
+    if(o === b || !isAngled(o) || o.snapCorner !== c) continue;
+    consider(o.snapT*h.len, o.width/2);
+  }
+  for(const op of openings){
+    if(!op.snapped || op.snapType !== 'corner' || op.snapCorner !== c) continue;
+    consider(op.snapT*op.snapHypLen, op.width/2);
+  }
+  return {h, lo, hi, nearLo, nearHi,
+          gapLo:Math.max(0, Math.round(lo-nearLo)),
+          gapHi:Math.max(0, Math.round(nearHi-hi))};
+}
+
+function drawAngledBoxDims(b){
+  const g = boxHypGaps(b);
+  if(!g) return;
+  const {h} = g;
+  const at = d => toC(h.p1.x + d*h.ux, h.p1.y + d*h.uy);
+  const a1 = at(g.lo), a2 = at(g.hi);
+  drawDimLine(a1.x, a1.y, a2.x, a2.y, fmtD(b.width), -1, {type:'box-hyp-dim', box:b, which:'width'}, true);
+  const l1 = at(g.nearLo);
+  drawDimLine(l1.x, l1.y, a1.x, a1.y, fmtD(g.gapLo), -1, {type:'box-hyp-gap', box:b, side:'lo'}, true);
+  const h2 = at(g.nearHi);
+  drawDimLine(a2.x, a2.y, h2.x, h2.y, fmtD(g.gapHi), -1, {type:'box-hyp-gap', box:b, side:'hi'}, true);
+}
+
 function drawBoxGapDims(b, bb){
+  if(isAngled(b)){ drawAngledBoxDims(b); return; }
   const {nearLo, gapLo, nearHi, gapHi, alongH} = boxNearestObjects(b, bb);
   if(alongH){
     const cy = (toC(0,bb.y1).y + toC(0,bb.y2).y)/2;
@@ -1197,6 +1413,13 @@ function openDim(tag, cx, cy){
     const {gapLo, gapHi} = boxNearestObjects(b, boxBB(b));
     lbl.textContent = (tag.side === 'lo' ? 'Gap before item' : 'Gap after item') + ' (0 = touching)';
     inp.value = fmtE(tag.side === 'lo' ? gapLo : gapHi);
+  }else if(tag.type === 'box-hyp-gap'){
+    const g = boxHypGaps(tag.box);
+    lbl.textContent = (tag.side === 'lo' ? 'Gap before item' : 'Gap after item') + ' along the angled wall';
+    inp.value = fmtE(g ? (tag.side === 'lo' ? g.gapLo : g.gapHi) : 0);
+  }else if(tag.type === 'box-hyp-dim'){
+    lbl.textContent = 'Width along the angled wall';
+    inp.value = fmtE(tag.box.width);
   }
 
   const el = $('dim-editor');
@@ -1252,6 +1475,18 @@ function confirmDim(){
     if(tag.ep === 'p1') w.y1 = nY; else w.y2 = nY;
   }else if(tag.type === 'cg'){
     applyCornerGap(tag.corner, tag.axis, val);
+  }else if(tag.type === 'box-hyp-dim'){
+    tag.box.width = Math.max(50, val);
+    anchorBox(tag.box);
+  }else if(tag.type === 'box-hyp-gap'){
+    const b = tag.box, g = boxHypGaps(b);
+    if(g){
+      const v = Math.max(0, val);
+      // Move the box along the angled wall so the chosen gap becomes val.
+      const centre = tag.side === 'lo' ? g.nearLo + v + b.width/2
+                                       : g.nearHi - v - b.width/2;
+      placeBoxOnHyp(b, b.snapCorner, centre/g.h.len);
+    }
   }else if(tag.type === 'box-gap'){
     const b = tag.box;
     const {nearLo, nearHi, alongH} = boxNearestObjects(b, boxBB(b));
@@ -1521,35 +1756,67 @@ function drawBoxes(){
       ctx.fillStyle = isDrag ? (b.snapped ? 'rgba(29,158,117,0.18)' : 'rgba(211,90,48,0.16)')
                     : isSel ? col+'30' : col+'28';
     }
-    ctx.beginPath(); ctx.rect(c1.x, c1.y, W, H); ctx.fill(); ctx.stroke();
+    // Outline: a plain rect when square to the room, the rotated footprint when
+    // lying along an angled wall.
+    const angled = isAngled(b);
+    ctx.beginPath();
+    if(angled){
+      const cp = boxCorners(b).map(p => toC(p.x, p.y));
+      ctx.moveTo(cp[0].x, cp[0].y);
+      for(let i=1; i<cp.length; i++) ctx.lineTo(cp[i].x, cp[i].y);
+      ctx.closePath();
+    }else{
+      ctx.rect(c1.x, c1.y, W, H);
+    }
+    ctx.fill(); ctx.stroke();
     ctx.setLineDash([]);
 
     // Door / front face line, on the side away from the wall
-    if(!isDrag && b.snapped && b.snappedFace){
-      const frontPx = (b.type === 'kitchen' ? b.doorDepth : Math.min(60, b.depth*0.2))*scale;
+    if(!isDrag && b.snapped){
+      const fd = b.type === 'kitchen' ? b.doorDepth : Math.min(60, b.depth*0.2);
       ctx.strokeStyle = b.overhead ? col+'88' : isSel ? COL.sel : col+'cc';
       ctx.lineWidth = 1; ctx.beginPath();
-      if(b.snappedFace === 'top'){    const fy = c2.y-frontPx; ctx.moveTo(c1.x,fy); ctx.lineTo(c2.x,fy); }
-      else if(b.snappedFace === 'bottom'){ const fy = c1.y+frontPx; ctx.moveTo(c1.x,fy); ctx.lineTo(c2.x,fy); }
-      else if(b.snappedFace === 'left'){   const fx = c2.x-frontPx; ctx.moveTo(fx,c1.y); ctx.lineTo(fx,c2.y); }
-      else {                               const fx = c1.x+frontPx; ctx.moveTo(fx,c1.y); ctx.lineTo(fx,c2.y); }
+      if(angled){
+        const {ux,uy,vx,vy} = boxAxes(b);
+        const off = b.depth/2 - fd, hw = b.width/2;
+        const f1 = toC(b.cx - hw*ux + off*vx, b.cy - hw*uy + off*vy);
+        const f2 = toC(b.cx + hw*ux + off*vx, b.cy + hw*uy + off*vy);
+        ctx.moveTo(f1.x, f1.y); ctx.lineTo(f2.x, f2.y);
+      }else if(b.snappedFace){
+        const frontPx = fd*scale;
+        if(b.snappedFace === 'top'){         const fy = c2.y-frontPx; ctx.moveTo(c1.x,fy); ctx.lineTo(c2.x,fy); }
+        else if(b.snappedFace === 'bottom'){ const fy = c1.y+frontPx; ctx.moveTo(c1.x,fy); ctx.lineTo(c2.x,fy); }
+        else if(b.snappedFace === 'left'){   const fx = c2.x-frontPx; ctx.moveTo(fx,c1.y); ctx.lineTo(fx,c2.y); }
+        else {                               const fx = c1.x+frontPx; ctx.moveTo(fx,c1.y); ctx.lineTo(fx,c2.y); }
+      }
       ctx.stroke();
     }
 
-    // Label, if it will fit
-    if(!isDrag && W > 30 && H > 14){
-      const fs = Math.max(8, Math.min(11, Math.min(W,H)*0.18));
-      ctx.font = fs+'px var(--font)';
+    // Label, if it will fit. An angled box gets its text turned to match.
+    const labW = angled ? b.width*scale : W;
+    const labH = angled ? b.depth*scale : H;
+    if(!isDrag && labW > 30 && labH > 14){
+      const fs = Math.max(8, Math.min(11, Math.min(labW, labH)*0.18));
+      const short = b.label.replace(' unit','');
+      const twoLine = labH > 28 && labW > 46;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillStyle = b.overhead ? col+'bb' : col+'ee';
-      const mx = (c1.x+c2.x)/2, my = (c1.y+c2.y)/2;
-      const short = b.label.replace(' unit','');
-      const twoLine = H > 28 && W > 46;
-      ctx.fillText(short, mx, my - (twoLine ? 6 : 0));
+      ctx.save();
+      const m = angled ? toC(b.cx, b.cy) : {x:(c1.x+c2.x)/2, y:(c1.y+c2.y)/2};
+      ctx.translate(m.x, m.y);
+      if(angled){
+        // Keep the text the right way up rather than upside down.
+        let a = boxAngle(b);
+        if(Math.cos(a) < 0) a += Math.PI;
+        ctx.rotate(a);
+      }
+      ctx.font = fs+'px var(--font)';
+      ctx.fillText(short, 0, twoLine ? -6 : 0);
       if(twoLine){
         ctx.font = Math.max(7, fs-1)+'px var(--font)';
-        ctx.fillText(b.width+'×'+b.depth, mx, my+7);
+        ctx.fillText(b.width+'×'+b.depth, 0, 7);
       }
+      ctx.restore();
     }
     ctx.restore();
 
@@ -1609,16 +1876,45 @@ function drawLockBadge(x, y){
 const toE = (along, z) => ({x: along*scale + offsetX, y: (roomCeil-z)*scale + offsetY});
 
 function elevWall(){ return $('elev-wall').value; }
+
+// The elevation selector lists the four room walls plus every angled corner,
+// since things can be snapped to those too.
+function refreshElevWalls(){
+  const sel = $('elev-wall');
+  const want = sel.value;
+  const opts = [
+    ['top','Top (north) wall'], ['bottom','Bottom (south) wall'],
+    ['left','Left (west) wall'], ['right','Right (east) wall'],
+  ];
+  corners.forEach((c,i) => { if(c.snapped) opts.push(['corner-'+i, `Angled wall ${i+1}`]); });
+  const same = sel.options.length === opts.length
+    && opts.every(([v], i) => sel.options[i] && sel.options[i].value === v);
+  if(same) return;
+  sel.textContent = '';
+  for(const [v,t] of opts) sel.appendChild(el('option', {value:v, text:t}));
+  sel.value = opts.some(([v]) => v === want) ? want : 'top';
+}
+
 function elevInfo(){
   const id = elevWall();
-  const horiz = id === 'top' || id === 'bottom';
+  if(id.startsWith('corner-')){
+    const idx = parseInt(id.slice(7), 10);
+    const c = corners[idx];
+    const h = c ? hypOf(c) : null;
+    if(h) return {id, kind:'corner', corner:c, hyp:h, len:h.len, horiz:false,
+                  mirror:false, coord:null, name:`Angled wall ${idx+1}`};
+    // The corner has gone, so fall back to the top wall.
+    $('elev-wall').value = 'top';
+  }
+  const wid = $('elev-wall').value;
+  const horiz = wid === 'top' || wid === 'bottom';
   return {
-    id, horiz,
+    id:wid, kind:'room', horiz,
     len: horiz ? roomW : roomH,
-    coord: id === 'top' || id === 'left' ? 0 : (horiz ? roomH : roomW),
+    coord: wid === 'top' || wid === 'left' ? 0 : (horiz ? roomH : roomW),
     // Two walls are mirrored because the viewer has turned around to face them.
-    mirror: id === 'bottom' || id === 'left',
-    name: {top:'Top (north) wall', bottom:'Bottom (south) wall', left:'Left (west) wall', right:'Right (east) wall'}[id]
+    mirror: wid === 'bottom' || wid === 'left',
+    name: {top:'Top (north) wall', bottom:'Bottom (south) wall', left:'Left (west) wall', right:'Right (east) wall'}[wid]
   };
 }
 // Convert a plan coordinate along the wall into viewer-left-to-right distance.
@@ -1684,6 +1980,32 @@ function drawElevation(){
 // Everything against the chosen wall, as {a1,a2,z1,z2,...} in viewer coords.
 function elevItems(info){
   const out = [];
+
+  // An angled wall carries only what is snapped to that specific corner.
+  if(info.kind === 'corner'){
+    const c = info.corner;
+    for(const o of openings){
+      if(!o.snapped || o.snapType !== 'corner' || o.snapCorner !== c) continue;
+      const centre = o.snapT*info.len, half = o.width/2;
+      const sill = o.type === 'door' ? 0 : (o.sill ?? 1100);
+      const h = o.height ?? (o.type === 'door' ? 2030 : 1000);
+      out.push({kind:o.type, a1:centre-half, a2:centre+half, z1:sill, z2:sill+h,
+                label:o.type === 'door' ? 'Door' : 'Window',
+                color:o.type === 'door' ? '#C9A227' : '#4E93A8', sill, height:h, obj:o});
+    }
+    for(const b of boxes()){
+      if(b.snapType !== 'corner' || b.snapCorner !== c) continue;
+      const centre = b.snapT*info.len, half = b.width/2;
+      const mountH = b.mountH ?? 0;
+      out.push({kind:b.type === 'kitchen' ? 'unit' : 'furn',
+                a1:centre-half, a2:centre+half,
+                z1:mountH, z2:mountH + (b.height ?? b.totalH ?? 800),
+                label:b.label, color:b.color, obj:b,
+                plinth:b.plinth || 0, worktop:!!(boxSpec(b) || {}).worktop});
+    }
+    return out.sort((p,q) => (q.z2-q.z1) - (p.z2-p.z1));
+  }
+
   const onThisWall = coord => Math.abs(coord - info.coord) <= WALL_T + 5;
 
   // Wall pieces and corner legs run floor to ceiling.
@@ -1827,6 +2149,7 @@ function drawElevItem(it, info){
 
 function setView(v){
   view = v;
+  refreshElevWalls();
   $('btn-plan').classList.toggle('active', v === 'plan');
   $('btn-elev').classList.toggle('active', v === 'elev');
   $('elev-wall').style.display = v === 'elev' ? '' : 'none';
@@ -2295,9 +2618,16 @@ function deleteSelected(){
   roomLabels   = roomLabels.filter(x => x !== target);
   kitchenUnits = kitchenUnits.filter(x => x !== target);
   furniture    = furniture.filter(x => x !== target);
-  // Any door snapped to a deleted corner goes back to floating.
+  // Anything snapped to a deleted corner goes back to floating.
   for(const o of openings){
     if(o.snapCorner === target){ o.snapCorner = null; o.snapType = null; o.snapped = false; }
+  }
+  for(const b of boxes()){
+    if(b.snapCorner === target){
+      b.snapCorner = null; b.snapType = null; b.snapped = false; b.angle = null;
+      clampBoxToRoom(b);
+      snapBox(b);
+    }
   }
   selectedItem = null;
   showSelected(); requestDraw();
@@ -2311,11 +2641,54 @@ function deleteSelected(){
 //  the state the user last saw.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// A live reference to a corner cannot survive JSON — it would be serialised as a
+// second copy of the corner and come back as a different object. Store the
+// corner's index instead and re-link on the way in.
 function snapshot(){
+  const idxOf = new Map(corners.map((c,i) => [c,i]));
+  const strip = o => {
+    const copy = {...o};
+    delete copy.snapCorner;
+    delete copy.snapP1;              // all three are derived from the corner
+    delete copy.snapP2;
+    delete copy.snapHypLen;
+    copy.snapCornerIdx = o.snapCorner ? (idxOf.has(o.snapCorner) ? idxOf.get(o.snapCorner) : null) : null;
+    return copy;
+  };
   return JSON.parse(JSON.stringify({
     roomW, roomH, roomCeil, roomName,
-    drawnWalls, wallPieces, corners, openings, roomLabels, kitchenUnits, furniture
+    drawnWalls, wallPieces, corners, roomLabels,
+    openings:     openings.map(strip),
+    kitchenUnits: kitchenUnits.map(strip),
+    furniture:    furniture.map(strip),
   }));
+}
+
+// Re-attach anything that was snapped to an angled corner.
+function rebindCornerSnaps(){
+  const drop = o => { o.snapType = null; o.snapped = false; o.snapCorner = null; o.angle = null; };
+  for(const o of openings){
+    if(o.snapType !== 'corner') continue;
+    const c = corners[o.snapCornerIdx];
+    const h = c ? hypOf(c) : null;
+    if(!h){ drop(o); o.cx ??= roomW/2; o.cy ??= roomH/2; continue; }
+    o.snapCorner = c;
+    o.snapP1 = h.p1;
+    o.snapP2 = h.p2;
+    o.snapHypLen = h.len;
+    o.snapT ??= 0.5;
+    o.cx = h.p1.x + o.snapT*(h.p2.x-h.p1.x);
+    o.cy = h.p1.y + o.snapT*(h.p2.y-h.p1.y);
+  }
+  for(const b of boxes()){
+    if(b.snapType !== 'corner') continue;
+    const c = corners[b.snapCornerIdx];
+    if(!c || !placeBoxOnHyp(b, c, b.snapT ?? 0.5)){
+      drop(b);
+      b.cx ??= roomW/2; b.cy ??= roomH/2;
+      clampBoxToRoom(b);
+    }
+  }
 }
 function applySnapshot(s){
   roomW = s.roomW; roomH = s.roomH;
@@ -2349,6 +2722,7 @@ function applySnapshot(s){
     ku.snapToWall ??= spec.snapToWall;
     ku.horiz ??= ku.snappedFace === 'left' || ku.snappedFace === 'right' ? false : true;
     ku.rot ??= FACE_TO_ROT[ku.snappedFace] ?? 0;
+    ku.snapType ??= ku.snappedFace ? 'axis' : null;
     ku.cx ??= roomW/2;
     ku.cy ??= roomH/2;
   }
@@ -2365,6 +2739,7 @@ function applySnapshot(s){
     f.overhead ??= !!spec.overhead;
     f.horiz ??= f.snappedFace === 'left' || f.snappedFace === 'right' ? false : true;
     f.rot ??= FACE_TO_ROT[f.snappedFace] ?? 0;
+    f.snapType ??= f.snappedFace ? 'axis' : null;
     f.cx ??= roomW/2;
     f.cy ??= roomH/2;
   }
@@ -2378,13 +2753,7 @@ function applySnapshot(s){
     l.text ??= 'Label';
     l.size ??= 'medium';
   }
-  // Re-link corner-snapped doors, which cannot survive JSON round-tripping.
-  for(const o of openings){
-    if(o.snapType === 'corner' && !corners.includes(o.snapCorner)){
-      o.snapType = null; o.snapped = false; o.snapCorner = null;
-      o.cx ??= roomW/2; o.cy ??= roomH/2;
-    }
-  }
+  rebindCornerSnaps();
   syncRoomInputs();
 }
 
@@ -2953,6 +3322,17 @@ function el(tag, props = {}, kids = []){
   return n;
 }
 const heading = t => el('div', {text:t, style:'font-size:11px;font-weight:500;color:var(--fg2);margin-bottom:4px;'});
+
+// Plain-English description of where a box has ended up.
+function boxWhere(b){
+  if(isAngled(b)){
+    const i = corners.indexOf(b.snapCorner);
+    const deg = Math.round(boxAngle(b)*180/Math.PI);
+    return `On angled wall ${i+1} (${deg}°) — Rotate to release it`;
+  }
+  if(b.snapped && b.snappedFace) return 'Against the ' + b.snappedFace + ' wall';
+  return b.snapToWall ? 'Not against a wall' : 'Free-standing';
+}
 const readout = (k, v) => el('div', {}, [el('div',{cls:'k',text:k}), el('div',{cls:'v',text:v})]);
 
 // A numeric field that commits on change and re-renders.
@@ -2991,6 +3371,7 @@ const delBtn = () => btn('Delete', deleteSelected);
 
 function showSelected(){
   const panel = $('selected-panel'), info = $('selected-info');
+  refreshElevWalls();
   info.textContent = '';
   if(!selectedItem){ panel.style.display = 'none'; refreshSchedule(); return; }
   panel.style.display = 'block';
@@ -3062,6 +3443,7 @@ function showSelected(){
   }else if(kitchenUnits.includes(it)){
     info.append(
       heading(it.label),
+      readout('Status', boxWhere(it)),
       selField('Type', Object.entries(KU_SPECS).map(([k,s]) => [k, s.label]), it.kuType, v => {
         const spec = KU_SPECS[v];
         Object.assign(it, {
@@ -3092,8 +3474,7 @@ function showSelected(){
   }else if(furniture.includes(it)){
     info.append(
       heading(it.label),
-      readout('Status', it.snapped ? 'Against the ' + it.snappedFace + ' wall'
-        : (it.snapToWall ? 'Not against a wall' : 'Free-standing')),
+      readout('Status', boxWhere(it)),
       numField('Width (mm)', it.width, v => { it.width = Math.max(50,v); anchorBox(it); settleBox(it); }, {min:50}),
       numField('Depth (mm)', it.depth, v => { it.depth = Math.max(50,v); anchorBox(it); settleBox(it); }, {min:50}),
       numField('Height (mm)', it.height, v => { it.height = Math.max(50,v); }, {min:50}),
@@ -3626,29 +4007,53 @@ function planPage(denom){
   for(const b of boxes()){
     const bb = boxBB(b);
     const rgb = hexRgb(b.color);
+    const angled = isAngled(b);
     g.q();
     if(b.overhead) g.dash([3,2]);
     g.fill(tint(rgb, 0.8)).ink(shade(rgb, 0.15)).lw(0.7);
-    g.re(X(bb.x1), Y(bb.y2), (bb.x2-bb.x1)*k, (bb.y2-bb.y1)*k).B();
+    if(angled){
+      const cp = boxCorners(b);
+      g.m(X(cp[0].x), Y(cp[0].y));
+      for(let i=1; i<cp.length; i++) g.l(X(cp[i].x), Y(cp[i].y));
+      g.ops.push('h');
+      g.B();
+    }else{
+      g.re(X(bb.x1), Y(bb.y2), (bb.x2-bb.x1)*k, (bb.y2-bb.y1)*k).B();
+    }
     g.dash(null);
+
     // Front face line
-    if(b.snapped && b.snappedFace){
+    if(b.snapped){
       const fd = (b.type === 'kitchen' ? b.doorDepth : Math.min(60, b.depth*0.2));
       g.lw(0.5);
-      if(b.snappedFace === 'top')         g.line(X(bb.x1), Y(bb.y2-fd), X(bb.x2), Y(bb.y2-fd));
+      if(angled){
+        const {ux,uy,vx,vy} = boxAxes(b);
+        const off = b.depth/2 - fd, hw = b.width/2;
+        g.line(X(b.cx - hw*ux + off*vx), Y(b.cy - hw*uy + off*vy),
+               X(b.cx + hw*ux + off*vx), Y(b.cy + hw*uy + off*vy));
+      }else if(b.snappedFace === 'top')   g.line(X(bb.x1), Y(bb.y2-fd), X(bb.x2), Y(bb.y2-fd));
       else if(b.snappedFace === 'bottom') g.line(X(bb.x1), Y(bb.y1+fd), X(bb.x2), Y(bb.y1+fd));
       else if(b.snappedFace === 'left')   g.line(X(bb.x2-fd), Y(bb.y1), X(bb.x2-fd), Y(bb.y2));
-      else                                g.line(X(bb.x1+fd), Y(bb.y1), X(bb.x1+fd), Y(bb.y2));
+      else if(b.snappedFace === 'right')  g.line(X(bb.x1+fd), Y(bb.y1), X(bb.x1+fd), Y(bb.y2));
     }
+
     // Label, if it fits
-    const wPt = (bb.x2-bb.x1)*k, hPt = (bb.y2-bb.y1)*k;
+    const wPt = (angled ? b.width : bb.x2-bb.x1)*k;
+    const hPt = (angled ? b.depth : bb.y2-bb.y1)*k;
     const fs = clamp(Math.min(wPt, hPt)*0.22, 3.4, 7);
     const label = b.label.replace(' unit','');
     if(wPt > textWidthPt(label, fs) + 3 && hPt > fs*2.2){
       g.fill(shade(rgb, 0.35));
-      const cxPt = X((bb.x1+bb.x2)/2), cyPt = Y((bb.y1+bb.y2)/2);
-      const vertical = hPt > wPt*1.6;
-      if(vertical){
+      const cxPt = X(angled ? b.cx : (bb.x1+bb.x2)/2);
+      const cyPt = Y(angled ? b.cy : (bb.y1+bb.y2)/2);
+      if(angled){
+        // Page y runs upward, so the plan angle is negated here. Keep it upright.
+        let a = -boxAngle(b);
+        if(Math.cos(a) < 0) a += Math.PI;
+        const nx = -Math.sin(a), ny = Math.cos(a);
+        g.text(cxPt - nx*fs*0.15, cyPt - ny*fs*0.15, fs, label, {align:'c', rotate:a});
+        g.text(cxPt + nx*fs*1.05, cyPt + ny*fs*1.05, fs, b.width+'x'+b.depth, {align:'c', rotate:a});
+      }else if(hPt > wPt*1.6){
         g.text(cxPt + fs*0.35, cyPt, fs, label, {align:'c', rotate:Math.PI/2});
         g.text(cxPt - fs*0.75, cyPt, fs, b.width+'x'+b.depth, {align:'c', rotate:Math.PI/2});
       }else{
