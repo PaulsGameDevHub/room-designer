@@ -131,6 +131,7 @@ const exposed = `
   boxHypGaps, boxInsideRoom, polyArea, clipByConvex, refreshElevWalls, rebindCornerSnaps,
   spanOf, depthOf, itemAngle, itemAxes, itemCorners, itemPolygon, itemAABB, ptInItem,
   placeOnHyp, itemHypGaps, itemInsideRoom, hypCandidates, unsnapPiece, anchorPiece,
+  settleInRun, anchorBox,
   releaseSnap, cornerGeometry, refreshSchedule, showSelected, applyRoom, setBoxRot,
   writeAutosave, restoreAutosave, exportPDF, exportPNG, saveRoom, textWidthPt,
   KU_SPECS, FURN_SPECS,
@@ -655,6 +656,113 @@ check('clipByConvex intersects two rotated rectangles', () => {
   return Math.abs(area-expect) < 1
     ? `${Math.round(area)}mm2, matches the expected octagon`
     : fail(`${Math.round(area)} vs expected ${Math.round(expect)}`);
+});
+
+// ── Runs of units along one wall ─────────────────────────────────────────────
+const emptyRoom = extra => api.applySnapshot(Object.assign({
+  roomW:8220, roomH:5050, roomCeil:2400,
+  drawnWalls:[], roomLabels:[], openings:[], furniture:[], corners:[],
+  wallPieces:[], kitchenUnits:[]
+}, extra || {}));
+
+// Drop a base unit of the given width at a spot and let it snap.
+function dropUnit(width, cx, cy){
+  document.getElementById('ku-type').value = 'base';
+  document.getElementById('ku-width').value = String(width);
+  api.addKitchenUnit();
+  const ku = api.kitchenUnits[api.kitchenUnits.length-1];
+  ku.cx = cx; ku.cy = cy;
+  api.snapBox(ku);
+  return ku;
+}
+const xSpan = ku => { const bb = api.boxBB(ku); return [bb.x1, bb.x2]; };
+
+check('two units on the same wall click flush together', () => {
+  emptyRoom();
+  const a = dropUnit(600, 2000, 250);
+  const b = dropUnit(600, 2680, 250);      // 80mm short of touching
+  const [aLo, aHi] = xSpan(a), [bLo, bHi] = xSpan(b);
+  const gap = bLo - aHi;
+  return Math.abs(gap) < 0.001
+    ? `dropped 80mm apart, closed to a ${gap}mm joint at x=${aHi}`
+    : fail(`gap is ${gap}mm, expected 0 (a ${aLo}..${aHi}, b ${bLo}..${bHi})`);
+});
+
+check('a unit dragged onto another is pushed out rather than overlapping', () => {
+  emptyRoom();
+  const a = dropUnit(600, 2000, 250);
+  const b = dropUnit(600, 2200, 250);      // squarely on top of a
+  const [aLo, aHi] = xSpan(a), [bLo, bHi] = xSpan(b);
+  const overlap = Math.min(aHi, bHi) - Math.max(aLo, bLo);
+  if(overlap > 0.001) return fail(`still overlapping by ${overlap}mm (a ${aLo}..${aHi}, b ${bLo}..${bHi})`);
+  return `pushed clear to ${bLo}..${bHi}, touching a at ${aHi}`;
+});
+
+check('three units form an exact continuous run', () => {
+  emptyRoom();
+  const a = dropUnit(600, 2000, 250);
+  const b = dropUnit(600, 2670, 250);
+  const c = dropUnit(500, 3250, 250);
+  const spans = [a,b,c].map(xSpan).sort((p,q) => p[0]-q[0]);
+  const gaps = [spans[1][0]-spans[0][1], spans[2][0]-spans[1][1]];
+  const total = spans[2][1] - spans[0][0];
+  if(gaps.some(g => Math.abs(g) > 0.001)) return fail(`gaps ${gaps.join(', ')}mm, expected 0`);
+  return Math.abs(total - 1700) < 0.001
+    ? `600+600+500 runs a continuous ${total}mm from x=${spans[0][0]} to ${spans[2][1]}`
+    : fail(`run measures ${total}mm, expected 1700`);
+});
+
+check('a unit on a different wall is left alone', () => {
+  emptyRoom();
+  const top = dropUnit(600, 2000, 250);
+  const left = dropUnit(600, 250, 2000);   // against the left wall
+  const beforeCy = left.cy;
+  api.snapBox(left);
+  if(left.snappedFace !== 'left') return fail(`expected the left wall, got ${left.snappedFace}`);
+  return Math.abs(left.cy - beforeCy) < 0.001
+    ? `left-wall unit stayed at cy=${left.cy} while a top-wall unit sat at cx=${top.cx}`
+    : fail(`left-wall unit moved from ${beforeCy} to ${left.cy}`);
+});
+
+check('a unit clicks flush to a wall stub on the same wall', () => {
+  emptyRoom({
+    // A stub hanging down off the top wall, crossing the unit depth band.
+    wallPieces:[{cx:3000, cy:500, len:1000, thick:100, horiz:false,
+                 snapped:true, snappedFace:'top', anchorWallCoord:0, orientationLocked:true}]
+  });
+  const ku = dropUnit(600, 2550, 250);     // right edge ~100mm short of the stub
+  const [lo, hi] = xSpan(ku);
+  return Math.abs(hi - 2950) < 0.001
+    ? `unit runs to x=${hi}, exactly against the stub face at 2950`
+    : fail(`unit right edge at ${hi}, expected 2950 (span ${lo}..${hi})`);
+});
+
+check('furniture joins the run too, not just kitchen units', () => {
+  emptyRoom();
+  const ku = dropUnit(600, 2000, 250);          // base unit on the top wall
+  document.getElementById('furn-cat').value = 'Bedroom';
+  document.getElementById('furn-type').value = 'chest';   // 800 x 450
+  api.addFurniture();
+  const f = api.furniture[api.furniture.length-1];
+  f.cx = 2790; f.cy = 200;                      // ~90mm short of the unit's edge
+  api.snapBox(f);
+  const [, kuHi] = xSpan(ku);
+  const fb = api.boxBB(f);
+  if(f.snappedFace !== 'top') return fail(`chest landed on the ${f.snappedFace} wall`);
+  const gap = fb.x1 - kuHi;
+  return Math.abs(gap) < 0.001
+    ? `chest of drawers butts the unit at x=${kuHi} with a ${gap}mm joint`
+    : fail(`gap of ${gap}mm between the unit and the chest`);
+});
+
+check('closing a run gap never pushes a unit into an angled wall', () => {
+  emptyRoom({corners:[{rx:0, ry:0, wa:3500, ha:520, rot:0, snapped:'placed'}]});
+  // On the LEFT wall just below the splay, which ends at y=520.
+  const ku = dropUnit(600, 250, 900);
+  const bb = api.boxBB(ku);
+  const area = api.cornerOverlapArea(api.boxPolygon(ku), api.corners[0]);
+  if(area > 1) return fail(`driven into the splay by ${area.toFixed(0)}mm2`);
+  return `sits at y ${bb.y1}..${bb.y2}, clear of the splay ending at y=520`;
 });
 
 // ── Gaps must only count things on the same wall ─────────────────────────────

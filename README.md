@@ -47,6 +47,13 @@ set in the sidebar.
 **Kitchen units** — base, wall, tall and island, with real carcass and door depths.
 Wall units are drawn dashed to show they are overhead.
 
+**Runs.** Two items on the same wall never overlap: drag one into another and it is
+pushed out to touch. Bring one within 150mm of a neighbour and it clicks flush, so a
+run adds up exactly — three units of 600, 600 and 500 measure 1700mm with no slivers
+between them. The same applies to a wall stub, an opening reveal or an angled splay,
+because they are the same obstacle edges the gap dimensions use. Furniture joins runs
+as well, so a chest of drawers butts up against a base unit.
+
 **Furniture and appliances** — around 45 items across living, dining, bedroom, kitchen
 appliance, bathroom and storage categories, each with realistic sizes. Items that
 normally sit against a wall snap to one; free-standing items do not. Any item can be

@@ -227,6 +227,7 @@ const WALL_T = 100;        // outer wall thickness, mm
 const DIM_OFFSET = 52;     // px from outer wall to the overall dimension line
 const SNAP_MM = 250;       // snap capture distance for wall pieces, mm
 const BOX_SNAP_MM = 300;   // snap capture distance for units and furniture, mm
+const RUN_SNAP_MM = 150;   // how close two units must be to click flush, mm
 const HISTORY_MAX = 100;
 const MM_PER_PT = 25.4 / 72;
 const PT_PER_MM = 72 / 25.4;
@@ -235,7 +236,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-06 17:35';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-06 17:56';   /*BUILD_STAMP*/
 
 const COL = {
   dim:'#85B7EB', dimPdf:'#185FA5', sel:'#1D9E75', drag:'#D85A30',
@@ -725,7 +726,10 @@ function snapBox(b){
     anchorBox(b);
     // A wall-snapped box can only slide along that wall. If that leaves it
     // buried in an angled corner, this wall is not a valid home — try the next.
-    if(slideBoxClear(b, [alongAxisFor(cand.face)])) return;
+    if(slideBoxClear(b, [alongAxisFor(cand.face)])){
+      settleInRun(b);
+      return;
+    }
   }
 
   // Nothing works, so leave it free-standing where the user put it.
@@ -735,6 +739,66 @@ function snapBox(b){
   slideBoxClear(b, ['x','y']);
 }
 const ptInBox = (mx, my, b) => ptInItem(mx, my, b);
+
+// ── Runs of units along one wall ────────────────────────────────────────────
+//
+// Two units on the same wall should not occupy the same space, and when they
+// come close they should click flush, so a kitchen run adds up exactly.
+function settleInRun(b){
+  if(!b.snapped || !b.snappedFace || isAngled(b)) return;
+  const face = b.snappedFace;
+  const alongH = face === 'top' || face === 'bottom';
+  const pos = alongH ? 'cx' : 'cy';       // the coordinate that runs along the wall
+  const key = alongH ? 'x' : 'y';
+  const runAxis = alongAxisFor(face);
+  const extent = () => {
+    const bb = boxBB(b);
+    return {lo:bb[key+'1'], hi:bb[key+'2'], half:(bb[key+'2']-bb[key+'1'])/2};
+  };
+  const neighbours = () => boxes().filter(o =>
+    o !== b && o.snapped && !isAngled(o) && o.snappedFace === face);
+
+  // 1. Slide out of any overlap, toward whichever side is nearer.
+  for(let pass=0; pass<4; pass++){
+    const {lo, hi, half} = extent();
+    let moved = false;
+    for(const o of neighbours()){
+      const ob = boxBB(o);
+      const oLo = ob[key+'1'], oHi = ob[key+'2'];
+      if(hi <= oLo + 0.5 || lo >= oHi - 0.5) continue;     // already clear
+      const before = oLo - half, after = oHi + half;
+      const cur = b[pos];
+      b[pos] = Math.abs(before-cur) <= Math.abs(after-cur) ? before : after;
+      anchorBox(b);
+      moved = true;
+      break;
+    }
+    if(!moved) break;
+  }
+  clampBoxToRoom(b);
+  anchorBox(b);
+  slideBoxClear(b, [runAxis]);
+
+  // 2. Close a small remaining gap so the run butts up exactly. The obstacle
+  // edges come from the same place the gap dimensions do, so a unit clicks to a
+  // neighbour, a wall stub, an opening reveal or an angled splay alike.
+  const {lo, hi, half} = extent();
+  const near = boxNearestObjects(b, boxBB(b));
+  const gapLo = lo - near.nearLo, gapHi = near.nearHi - hi;
+  let target = null;
+  if(gapLo > 0.5 && gapLo <= RUN_SNAP_MM && (gapHi <= 0.5 || gapLo <= gapHi)) target = near.nearLo + half;
+  else if(gapHi > 0.5 && gapHi <= RUN_SNAP_MM) target = near.nearHi - half;
+  if(target === null) return;
+
+  const saved = b[pos];
+  b[pos] = target;
+  anchorBox(b);
+  // Never let closing a gap bury it in a corner or push it out of the room.
+  if(!clearOfCorners(b, boxPolygon) || !boxInsideRoom(b)){
+    b[pos] = saved;
+    anchorBox(b);
+  }
+}
 
 // ── Snapping flush along an angled corner ──────────────────────────────────
 
