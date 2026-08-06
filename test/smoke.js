@@ -662,8 +662,22 @@ check('clipByConvex intersects two rotated rectangles', () => {
     : fail(`${Math.round(area)} vs expected ${Math.round(expect)}`);
 });
 
-// ── Draw-wall tool (trial) ───────────────────────────────────────────────────
-// This code path shipped in v15 with no button to reach it, so it had never run.
+// ── Draw-wall tool (switched off, kept working) ──────────────────────────────
+// The feature is complete but hidden behind FEATURES.drawWall. These tests keep
+// the dormant path honest, so flipping the flag back on cannot ship something
+// broken. They call setMode('wall') directly, which is why they still run.
+check('the draw-wall button is hidden while the feature is off', () => {
+  const html = fs.readFileSync(HTML, 'utf8');
+  const flag = /drawWall:\s*(true|false)/.exec(html);
+  if(!flag) return fail('could not find the FEATURES.drawWall flag');
+  const btn = /<button id="btn-wall"[^>]*>/.exec(html);
+  if(!btn) return fail('the btn-wall markup has gone, so the flag cannot restore it');
+  const markupHidden = / hidden/.test(btn[0]);
+  const applied = /\$\('btn-wall'\)\.hidden = !FEATURES\.drawWall;/.test(html);
+  if(!applied) return fail('nothing applies the flag to the button');
+  if(flag[1] === 'false' && !markupHidden) return fail('flag is off but the button is not hidden in the markup');
+  return `FEATURES.drawWall = ${flag[1]}, button hidden in markup = ${markupHidden}, flag applied at startup`;
+});
 // Drive the real click handler rather than calling internals, by converting room
 // coordinates back to canvas pixels the way the app does.
 function clickCanvas(roomX, roomY){

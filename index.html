@@ -73,8 +73,8 @@ table.sched tr.total td{font-weight:600;border-top:1px solid var(--bd);border-bo
   <div id="toolbar">
     <button id="btn-select" class="active" onclick="setMode('select')">Select</button>
     <button onclick="addWallPiece()">Add wall</button>
-    <!-- Trial feature. To remove it, delete this one button. -->
-    <button id="btn-wall" onclick="setMode('wall')">Draw wall</button>
+    <!-- Shown only when FEATURES.drawWall is true — see the script below. -->
+    <button id="btn-wall" onclick="setMode('wall')" hidden>Draw wall</button>
     <button onclick="addCorner()">Angled corner</button>
     <button onclick="addDoor()">Door</button>
     <button onclick="addWindow()">Window</button>
@@ -230,7 +230,17 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-06 22:43';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-06 22:49';   /*BUILD_STAMP*/
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Optional features — flip a value here, nothing else, to turn one on or off
+// ═══════════════════════════════════════════════════════════════════════════
+const FEATURES = {
+  // Draw a wall of any angle by clicking two points. Fully built and tested;
+  // switched off because the two existing wall tools cover the usual cases.
+  // Change to true to put the "Draw wall" button back in the toolbar.
+  drawWall: false,
+};
 
 const COL = {
   dim:'#85B7EB', dimPdf:'#185FA5', sel:'#1D9E75', drag:'#D85A30',
@@ -4866,6 +4876,7 @@ window.addEventListener('beforeunload', () => { clearTimeout(autosaveTimer); wri
 initDropdowns();
 updateHistoryButtons();
 $('build').textContent = BUILD;
+$('btn-wall').hidden = !FEATURES.drawWall;
 
 // The container can start with no size at all — a background tab, a collapsed
 // pane, an iframe that has not been laid out. Nothing can be measured or fitted

@@ -95,6 +95,24 @@ closing the tab no longer loses the plan.
 | `+` / `-` or wheel | zoom (wheel zooms to the cursor) |
 | middle-drag or `Space`-drag | pan |
 
+## Optional features
+
+Near the top of the script in `index.html`:
+
+```js
+const FEATURES = {
+  drawWall: false,
+};
+```
+
+Change a value to `true` to switch that feature on. Nothing else needs editing.
+
+- **`drawWall`** — a "Draw wall" toolbar button. Click two points and a 100mm-thick
+  wall is placed at that angle on the second click; length and thickness are then
+  editable in the sidebar. Complete and covered by tests, but switched off because
+  "Add wall" and "Angled corner" cover the usual cases. Nothing snaps to a drawn
+  wall, which is the reason it is not the default way to add one.
+
 ## Build stamp
 
 The bottom-right corner shows which build you are looking at, e.g.
