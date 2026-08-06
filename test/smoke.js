@@ -129,6 +129,8 @@ const exposed = `
   slideBoxClear, slidePieceClear, settlePiece, settleBox, clearOfCorners, firstSnap, reSnap,
   isAngled, boxAngle, boxAxes, boxCorners, boxPolygon, hypOf, placeBoxOnHyp,
   boxHypGaps, boxInsideRoom, polyArea, clipByConvex, refreshElevWalls, rebindCornerSnaps,
+  spanOf, depthOf, itemAngle, itemAxes, itemCorners, itemPolygon, itemAABB, ptInItem,
+  placeOnHyp, itemHypGaps, itemInsideRoom, hypCandidates, unsnapPiece, anchorPiece,
   releaseSnap, cornerGeometry, refreshSchedule, showSelected, applyRoom, setBoxRot,
   writeAutosave, restoreAutosave, exportPDF, exportPNG, saveRoom, textWidthPt,
   KU_SPECS, FURN_SPECS,
@@ -644,6 +646,144 @@ check('clipByConvex intersects two rotated rectangles', () => {
   return Math.abs(area-expect) < 1
     ? `${Math.round(area)}mm2, matches the expected octagon`
     : fail(`${Math.round(area)} vs expected ${Math.round(expect)}`);
+});
+
+// ── Every object type against every kind of wall ────────────────────────────
+// The whole point of the feature, asserted as one matrix so a regression in any
+// single cell fails loudly.
+check('every object type clips to every kind of wall', () => {
+  const freshRoom = () => api.applySnapshot({
+    roomW:8220, roomH:5050, roomCeil:2400, roomName:'Matrix',
+    drawnWalls:[], roomLabels:[], openings:[], kitchenUnits:[], furniture:[],
+    // An internal wall piece to snap against, plus a shallow canted corner.
+    wallPieces:[{cx:4000, cy:1000, len:2000, thick:200, horiz:false,
+                 snapped:true, snappedFace:'top', anchorWallCoord:0, orientationLocked:true}],
+    corners:[{rx:0, ry:0, wa:3700, ha:550, rot:0, snapped:'placed'}]
+  });
+
+  // How far the item's centre sits from the surface it is meeting. A wall piece
+  // meets a straight wall end-on but lies along an angled one; an opening sits
+  // inside the wall either way, so its offset is zero.
+  const endOnHalf = it => it.len !== undefined ? it.len/2
+                        : it.depth !== undefined ? it.depth/2 : 0;
+  const alongHalf = it => it.len !== undefined ? it.thick/2
+                        : it.depth !== undefined ? it.depth/2 : 0;
+
+  const targets = {
+    'room wall': it => { it.cx = 6000; it.cy = 5050 - endOnHalf(it) - 40; },
+    'wall piece face': it => { it.cx = 4000; it.cy = 2000 + endOnHalf(it) + 30; },
+    'angled wall': it => {
+      const h = api.hypOf(api.corners[0]);
+      const px = h.p1.x + 0.5*h.len*h.ux, py = h.p1.y + 0.5*h.len*h.uy;
+      it.cx = px + h.nx*(alongHalf(it) + 40);
+      it.cy = py + h.ny*(alongHalf(it) + 40);
+    },
+  };
+
+  const makers = {
+    'kitchen unit': () => {
+      document.getElementById('ku-type').value = 'base';
+      document.getElementById('ku-width').value = '600';
+      api.addKitchenUnit();
+      const it = api.kitchenUnits[api.kitchenUnits.length-1];
+      return {it, snap:() => api.snapBox(it)};
+    },
+    'sofa': () => {
+      document.getElementById('furn-cat').value = 'Living';
+      document.getElementById('furn-type').value = 'sofa2';
+      api.addFurniture();
+      const it = api.furniture[api.furniture.length-1];
+      return {it, snap:() => api.snapBox(it)};
+    },
+    'door':   () => { api.addDoor();   const it = api.openings[api.openings.length-1]; return {it, snap:() => api.snapDoor(it)}; },
+    'window': () => { api.addWindow(); const it = api.openings[api.openings.length-1]; return {it, snap:() => api.snapDoor(it)}; },
+    'wall piece': () => {
+      api.addWallPiece();
+      const it = api.wallPieces[api.wallPieces.length-1];
+      it.len = 900; it.thick = 100;
+      return {it, snap:() => {
+        it.orientationLocked = false; it.snapped = false;
+        api.releaseSnap(it, api.wallPieces.indexOf(it));
+      }};
+    },
+  };
+
+  const bad = [], grid = [];
+  for(const [objName, make] of Object.entries(makers)){
+    const row = [];
+    for(const [wallName, place] of Object.entries(targets)){
+      freshRoom();
+      const {it, snap} = make();
+      place(it);
+      snap();
+      const angled = it.snapType === 'corner';
+      const ok = wallName === 'angled wall' ? angled : (it.snapped && !angled);
+      if(!ok) bad.push(`${objName} -> ${wallName} (snapType=${it.snapType} snapped=${it.snapped} face=${it.snappedFace})`);
+      row.push(ok ? 'y' : 'N');
+    }
+    grid.push(objName + ':' + row.join(''));
+  }
+  return bad.length ? fail(bad.join('; '))
+                    : `all 15 combinations snap — ${grid.join('  ')}`;
+});
+
+check('a wall piece on an angled wall lies flush along it', () => {
+  api.applySnapshot({
+    roomW:8220, roomH:5050, roomCeil:2400,
+    drawnWalls:[], roomLabels:[], openings:[], kitchenUnits:[], furniture:[], wallPieces:[],
+    corners:[{rx:0, ry:0, wa:3700, ha:550, rot:0, snapped:'placed'}]
+  });
+  const h = api.hypOf(api.corners[0]);
+  api.addWallPiece();
+  const p = api.wallPieces[0];
+  p.len = 900; p.thick = 100; p.orientationLocked = false;
+  const px = h.p1.x + 0.5*h.len*h.ux, py = h.p1.y + 0.5*h.len*h.uy;
+  p.cx = px + h.nx*(p.thick/2 + 40);
+  p.cy = py + h.ny*(p.thick/2 + 40);
+  api.releaseSnap(p, 0);
+  if(!api.isAngled(p)) return fail(`did not take the angled snap (snapType=${p.snapType})`);
+
+  const cp = api.itemCorners(p);
+  const dist = q => (q.x-h.p1.x)*h.nx + (q.y-h.p1.y)*h.ny;
+  const back = [dist(cp[0]), dist(cp[1])];
+  const front = [dist(cp[2]), dist(cp[3])];
+  const area = api.polyArea(cp);
+  if(Math.abs(back[0]) > 0.01 || Math.abs(back[1]) > 0.01)
+    return fail(`back edge not flush: ${back.map(d=>d.toFixed(3))}`);
+  if(front[0] <= 0 || front[1] <= 0)
+    return fail(`front edge is not inside the room: ${front.map(d=>d.toFixed(1))}`);
+  if(Math.abs(area - p.len*p.thick) > 1)
+    return fail(`footprint area ${Math.round(area)} vs ${p.len*p.thick}`);
+  return `flush to ${back.map(d=>d.toFixed(3)).join('/')}mm, `
+    + `${Math.round(front[0])}mm thick into the room, area ${Math.round(area)}mm2`;
+});
+
+check('an angled wall piece is dimensioned along that wall and survives reload', () => {
+  const p = api.wallPieces[0];
+  const g = api.itemHypGaps(p);
+  if(!g) return fail('no along-wall gaps computed');
+  const total = g.gapLo + p.len + g.gapHi;
+  if(Math.abs(total - g.h.len) > 2) return fail(`${g.gapLo}+${p.len}+${g.gapHi} != ${Math.round(g.h.len)}`);
+  const t = p.snapT, cx = p.cx, cy = p.cy;
+  api.applySnapshot(JSON.parse(JSON.stringify(api.roomData())));
+  const q = api.wallPieces[0];
+  if(!api.isAngled(q)) return fail('lost the angled snap on reload');
+  if(!api.corners.includes(q.snapCorner)) return fail('snapCorner is not a live reference after reload');
+  if(Math.abs(q.snapT-t) > 1e-9 || Math.abs(q.cx-cx) > 0.01 || Math.abs(q.cy-cy) > 0.01)
+    return fail(`moved on reload: t ${t}->${q.snapT}`);
+  return `${g.gapLo} + ${p.len} + ${g.gapHi} = ${Math.round(total)}mm along the wall, reload preserved it`;
+});
+
+check('deleting the corner releases an angled wall piece', () => {
+  const before = api.wallPieces.length;
+  api.selectedItem = api.corners[0];
+  api.deleteSelected();
+  const p = api.wallPieces[0];
+  if(!p) return fail(`the wall piece went too (${before} -> ${api.wallPieces.length})`);
+  if(api.isAngled(p)) return fail('still flagged as angled with no corner left');
+  const inside = api.itemInsideRoom(p);
+  return inside ? `released, now ${p.snapped ? 'snapped to '+p.snappedFace : 'free'}, still inside the room`
+                : fail('released but left outside the room');
 });
 
 check('straight-wall snapping is unchanged when no corner is involved', () => {

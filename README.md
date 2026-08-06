@@ -30,12 +30,14 @@ the gap from each leg tip to the next surface beyond it. They are solid: wall pi
 stop flush against a splay rather than sliding through it, and gap dimensions measure
 to the splay.
 
-Kitchen units and furniture can also **sit flush along** an angled face, turned to
-match it. Drag one near the angled wall and it snaps to the angle, slides along it,
-and clamps at each end. Its dimensions are then measured along that wall. Rotate
-releases it back to the square walls. Angled walls also appear in the elevation
-selector, so you can see what is against them at true heights. Wall pieces remain
-square to the room; only units, furniture and doors follow an angle.
+**Everything clips to every wall.** Doors, windows, kitchen units, furniture and wall
+pieces all snap to the room walls, to the faces of other wall pieces, and to angled
+faces — 15 combinations, asserted as a single test. On an angled wall an item turns
+to lie flush along it, slides along it, clamps at each end, and is dimensioned along
+that wall. Angled walls appear in the elevation selector too, so you can see what is
+against them at true heights.
+
+To get an item off an angled wall, rotate it (units and furniture) or drag it away.
 
 **Doors and windows** spawn floating in the middle of the room and snap when dragged to
 a wall — including to the hypotenuse of an angled corner. Doors draw a leaf and a
