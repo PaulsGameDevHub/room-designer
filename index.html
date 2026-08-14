@@ -83,6 +83,7 @@ table.sched tr.total td{font-weight:600;border-top:1px solid var(--bd);border-bo
     <button id="btn-furniture" onclick="togglePanel('furniture-panel','btn-furniture')">Furniture</button>
     <button id="btn-electric" onclick="togglePanel('electric-panel','btn-electric')">Sockets</button>
     <button onclick="addRadiator()">Add radiator</button>
+    <button onclick="addSlope()">Sloped ceiling</button>
     <button id="btn-schedule" onclick="toggleSchedule()">Schedule</button>
     <div class="sep"></div>
     <button id="btn-undo" onclick="undo()" title="Ctrl+Z">Undo</button>
@@ -244,7 +245,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-14 15:04';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-14 20:39';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -338,6 +339,12 @@ const FITTING_SPECS = {
 };
 const PLATE_D = 30;      // how far a fitting is drawn off the wall in plan, mm
 
+// A sloped ceiling zone: a rectangle over part of the plan where the ceiling ramps
+// linearly from one edge to the other. hLo is the height at the low-coordinate
+// edge, hHi at the far edge, so swapping them reverses the slope.
+const SLOPE_DEFAULTS = {width:1000, depth:2400, hLo:1200, axis:'y'};
+const HEADROOM_MM = 2000;   // where to mark the usable headroom line
+
 // Radiators. Panel depth follows the type — a double panel stands noticeably
 // further off the wall, which matters in plan. Depths exclude valves and pipework.
 // wPerM600 is the approximate output in watts per metre of length for a 600mm
@@ -385,7 +392,7 @@ let scale = 1, offsetX = 80, offsetY = 80;
 let view = 'plan';                 // 'plan' | 'elev'
 
 let drawnWalls = [], wallPieces = [], corners = [], openings = [], roomLabels = [];
-let kitchenUnits = [], furniture = [], fittings = [];
+let kitchenUnits = [], furniture = [], fittings = [], slopes = [];
 
 let mode = 'select';
 let selectedItem = null, dragging = null, dragOffX = 0, dragOffY = 0;
@@ -399,7 +406,7 @@ let past = [], future = [];
 let drawQueued = false, autosaveTimer = null, suppressAutosave = false;
 
 // Every collection that holds selectable, deletable items.
-const COLLECTIONS = () => [drawnWalls, wallPieces, corners, openings, roomLabels, kitchenUnits, furniture, fittings];
+const COLLECTIONS = () => [drawnWalls, wallPieces, corners, openings, roomLabels, kitchenUnits, furniture, fittings, slopes];
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Small helpers
@@ -1755,6 +1762,9 @@ function openDim(tag, cx, cy){
   }else if(tag.type === 'box-span'){
     lbl.textContent = tag.box.isRad ? 'Radiator length' : 'Width along the wall';
     inp.value = fmtE(tag.box.width);
+  }else if(tag.type === 'slope-dim'){
+    lbl.textContent = tag.which === 'width' ? 'Zone width' : 'Zone depth';
+    inp.value = fmtE(tag.slope[tag.which]);
   }
 
   const el = $('dim-editor');
@@ -1818,6 +1828,8 @@ function confirmDim(){
     tag.box.width = Math.max(50, val);
     anchorBox(tag.box);
     settleBox(tag.box);
+  }else if(tag.type === 'slope-dim'){
+    tag.slope[tag.which] = Math.max(100, val);
   }else if(tag.type === 'hyp-gap'){
     const it = tag.item, g = itemHypGaps(it);
     if(g){
@@ -1899,6 +1911,7 @@ function drawPlan(){
   ctx.strokeStyle = COL.room; ctx.lineWidth = 2.5;
   ctx.strokeRect(r0.x, r0.y, r1.x-r0.x, r1.y-r0.y);
 
+  drawSlopes();          // under everything, since it describes the ceiling
   drawGrid(r0, r1);
   drawRoomDims();
   if($('show-dims').checked) drawSubDivDims();
@@ -2299,22 +2312,105 @@ function elevInfo(){
 // Convert a plan coordinate along the wall into viewer-left-to-right distance.
 const toAlong = (info, planCoord) => info.mirror ? info.len - planCoord : planCoord;
 
+// The plan point just inside the wall at a given distance along it, so the
+// ceiling height there can be looked up.
+function elevPlanPointAt(info, along){
+  if(info.kind === 'corner'){
+    const h = info.hyp;
+    return {x:h.p1.x + along*h.ux + h.nx*20, y:h.p1.y + along*h.uy + h.ny*20};
+  }
+  const planCoord = info.mirror ? info.len - along : along;
+  const inset = 20;
+  if(info.horiz) return {x:planCoord, y:info.coord === 0 ? inset : info.coord - inset};
+  return {x:info.coord === 0 ? inset : info.coord - inset, y:planCoord};
+}
+const elevCeilingAt = (info, along) => {
+  const p = elevPlanPointAt(info, along);
+  return ceilingAt(p.x, p.y);
+};
+// Does any sloped ceiling reach this wall?
+function elevHasSlope(info){
+  if(!slopes.length) return false;
+  const steps = 40;
+  for(let i=0; i<=steps; i++){
+    if(elevCeilingAt(info, info.len*i/steps) < roomCeil - 0.5) return true;
+  }
+  return false;
+}
+
 function drawElevation(){
   const info = elevInfo();
   const p0 = toE(0, 0), p1 = toE(info.len, roomCeil);
   const floorY = p0.y, ceilY = p1.y, x0 = p0.x, x1 = p1.x;
+  const sloped = elevHasSlope(info);
 
-  // Wall face
+  // The ceiling profile across this wall, sampled so a slope shows as a ramp.
+  const profile = [];
+  const steps = sloped ? 160 : 1;
+  for(let i=0; i<=steps; i++){
+    const a = info.len*i/steps;
+    profile.push({a, h:sloped ? elevCeilingAt(info, a) : roomCeil});
+  }
+  const profPath = () => {
+    ctx.beginPath();
+    ctx.moveTo(toE(profile[0].a, profile[0].h).x, toE(profile[0].a, profile[0].h).y);
+    for(const pt of profile.slice(1)){
+      const p = toE(pt.a, pt.h);
+      ctx.lineTo(p.x, p.y);
+    }
+  };
+
+  // Wall face, clipped under the ceiling profile so a slope cuts the corner off.
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(toE(0, 0).x, toE(0, 0).y);
+  for(const pt of profile){ const p = toE(pt.a, pt.h); ctx.lineTo(p.x, p.y); }
+  ctx.lineTo(toE(info.len, 0).x, toE(info.len, 0).y);
+  ctx.closePath();
+  ctx.clip();
   ctx.fillStyle = 'rgba(255,255,255,0.03)';
-  ctx.fillRect(x0, ceilY, x1-x0, floorY-ceilY);
+  ctx.fillRect(x0, ceilY-200, x1-x0, floorY-ceilY+400);
+  ctx.restore();
 
   // Floor and ceiling slabs
   const slab = WALL_T*scale;
   ctx.fillStyle = 'rgba(180,180,180,0.18)';
   ctx.fillRect(x0-slab, floorY, x1-x0+slab*2, slab);
-  ctx.fillRect(x0-slab, ceilY-slab, x1-x0+slab*2, slab);
+  if(!sloped) ctx.fillRect(x0-slab, ceilY-slab, x1-x0+slab*2, slab);
   ctx.fillRect(x0-slab, ceilY-slab, slab, floorY-ceilY+slab*2);
   ctx.fillRect(x1,      ceilY-slab, slab, floorY-ceilY+slab*2);
+
+  // A sloping ceiling gets its own slab following the profile.
+  if(sloped){
+    ctx.save();
+    ctx.beginPath();
+    for(const pt of profile){ const p = toE(pt.a, pt.h); ctx.lineTo(p.x, p.y); }
+    for(const pt of [...profile].reverse()){
+      const p = toE(pt.a, pt.h);
+      ctx.lineTo(p.x, p.y - slab);
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(180,180,180,0.18)';
+    ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(200,200,200,0.5)';
+    ctx.lineWidth = 1.4;
+    profPath();
+    ctx.stroke();
+
+    // Where headroom runs out, and how low it gets.
+    const low = Math.min(...profile.map(p => p.h));
+    if(low < HEADROOM_MM){
+      ctx.strokeStyle = '#E0A63C'; ctx.lineWidth = 1; ctx.setLineDash([5,3]);
+      const hy = toE(0, HEADROOM_MM).y;
+      ctx.beginPath(); ctx.moveTo(x0, hy); ctx.lineTo(x1, hy); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = '9px var(--font)';
+      ctx.fillStyle = '#E0A63C';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+      ctx.fillText(`${fmtD(HEADROOM_MM)} headroom · lowest point ${fmtD(low)}`, x0 + 4, hy - 3);
+    }
+  }
 
   // Height guide lines every 500mm
   ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 0.5; ctx.setLineDash([]);
@@ -2325,12 +2421,28 @@ function drawElevation(){
   }
   ctx.stroke();
 
-  ctx.strokeStyle = COL.room; ctx.lineWidth = 2.5;
-  ctx.strokeRect(x0, ceilY, x1-x0, floorY-ceilY);
+  // Room outline: floor, two sides, and the ceiling following its profile.
+  ctx.strokeStyle = COL.room; ctx.lineWidth = 2.5; ctx.setLineDash([]);
+  if(sloped){
+    ctx.beginPath();
+    ctx.moveTo(x0, floorY);
+    ctx.lineTo(x1, floorY);
+    ctx.lineTo(toE(info.len, profile[profile.length-1].h).x, toE(info.len, profile[profile.length-1].h).y);
+    for(const pt of [...profile].reverse()){
+      const p = toE(pt.a, pt.h);
+      ctx.lineTo(p.x, p.y);
+    }
+    ctx.closePath();
+    ctx.stroke();
+  }else{
+    ctx.strokeRect(x0, ceilY, x1-x0, floorY-ceilY);
+  }
 
   // Collect everything that appears on this wall, back to front.
   const items = elevItems(info);
   for(const it of items) drawElevItem(it, info);
+  // Anything poking through a sloped ceiling is worth calling out.
+  if(sloped) flagItemsThroughCeiling(info, items);
 
   // Ceiling height dimension on the left, wall length along the bottom
   const col = COL.dim;
@@ -2575,6 +2687,27 @@ function drawElevItem(it, info){
   }
 }
 
+// Outline in warning colour anything taller than the ceiling above it, which is
+// the mistake a sloped ceiling invites — a tall unit under the low end.
+function flagItemsThroughCeiling(info, items){
+  for(const it of items){
+    if(it.kind === 'wall') continue;
+    const mid = (it.a1 + it.a2)/2;
+    const ceil = Math.min(elevCeilingAt(info, it.a1), elevCeilingAt(info, mid), elevCeilingAt(info, it.a2));
+    if(it.z2 <= ceil + 0.5) continue;
+    const p1 = toE(it.a1, it.z2), p2 = toE(it.a2, it.z1);
+    ctx.save();
+    ctx.strokeStyle = '#D9534F'; ctx.lineWidth = 2; ctx.setLineDash([4,3]);
+    ctx.strokeRect(p1.x, p1.y, p2.x-p1.x, p2.y-p1.y);
+    ctx.setLineDash([]);
+    ctx.font = '9px var(--font)';
+    ctx.fillStyle = '#D9534F';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillText(`${fmtD(it.z2 - ceil)} too tall`, (p1.x+p2.x)/2, p1.y - 3);
+    ctx.restore();
+  }
+}
+
 function setView(v){
   view = v;
   refreshElevWalls();
@@ -2772,6 +2905,148 @@ function addRadiator(){
   setMode('select'); showSelected(); requestDraw();
   status(`${r.width}mm radiator, ${r.depth}mm deep, ${r.mountH}mm off the floor — `
     + `drag it to a wall, then click a dimension to change it`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Sloped ceilings
+//
+//  A rectangular zone where the ceiling ramps between two heights — the soffit
+//  over a staircase, or a raked ceiling in a loft. Everywhere else stays at
+//  roomCeil. What it really tells you is where you can and cannot stand up.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function slopeBB(s){
+  const hw = s.width/2, hd = s.depth/2;
+  return {x1:s.cx-hw, y1:s.cy-hd, x2:s.cx+hw, y2:s.cy+hd};
+}
+const ptInSlope = (mx,my,s) => {
+  const bb = slopeBB(s);
+  return mx>=bb.x1 && mx<=bb.x2 && my>=bb.y1 && my<=bb.y2;
+};
+
+// Ceiling height at a point. Overlapping zones take the lowest, since the
+// tightest constraint is the one that matters.
+function ceilingAt(x, y){
+  let h = roomCeil;
+  for(const s of slopes){
+    const bb = slopeBB(s);
+    if(x < bb.x1 || x > bb.x2 || y < bb.y1 || y > bb.y2) continue;
+    const span = s.axis === 'x' ? bb.x2-bb.x1 : bb.y2-bb.y1;
+    if(span <= 0) continue;
+    const t = s.axis === 'x' ? (x-bb.x1)/span : (y-bb.y1)/span;
+    h = Math.min(h, s.hLo + t*(s.hHi - s.hLo));
+  }
+  return h;
+}
+// Where along the slope the ceiling passes a given height, as a fraction 0..1.
+function slopeCrossing(s, height){
+  if(s.hHi === s.hLo) return null;
+  const t = (height - s.hLo)/(s.hHi - s.hLo);
+  return (t > 0.001 && t < 0.999) ? t : null;
+}
+
+function addSlope(){
+  const s = {
+    type:'slope',
+    cx:roomW/2, cy:roomH/2,
+    width:SLOPE_DEFAULTS.width, depth:SLOPE_DEFAULTS.depth,
+    axis:SLOPE_DEFAULTS.axis,
+    hLo:SLOPE_DEFAULTS.hLo, hHi:roomCeil,
+    locked:false
+  };
+  pushHistory();
+  slopes.push(s);
+  selectedItem = s;
+  setMode('select'); showSelected(); requestDraw();
+  status(`Sloped ceiling ${s.width}×${s.depth}mm, ${fmtD(s.hLo)} rising to ${fmtD(s.hHi)} `
+    + `— drag it over the stairs, then set the heights in the sidebar`);
+}
+
+function drawSlopes(){
+  for(const s of slopes){
+    const isSel = selectedItem === s, isDrag = dragging === s;
+    const bb = slopeBB(s);
+    const c1 = toC(bb.x1, bb.y1), c2 = toC(bb.x2, bb.y2);
+    const W = c2.x-c1.x, H = c2.y-c1.y;
+
+    ctx.save();
+    // Banded shading, lightest at the high end, so the fall reads at a glance.
+    const bands = 8;
+    for(let i=0; i<bands; i++){
+      const f0 = i/bands, f1 = (i+1)/bands;
+      const a = 0.05 + 0.16*(1-f0);          // darker where the ceiling is lower
+      ctx.fillStyle = `rgba(150,120,200,${a.toFixed(3)})`;
+      if(s.axis === 'x') ctx.fillRect(c1.x + W*f0, c1.y, W*(f1-f0)+0.5, H);
+      else               ctx.fillRect(c1.x, c1.y + H*f0, W, H*(f1-f0)+0.5);
+    }
+    ctx.strokeStyle = isDrag ? COL.drag : isSel ? COL.sel : '#9678C8';
+    ctx.lineWidth = isSel ? 2.4 : 1.4;
+    ctx.setLineDash(isSel ? [] : [6,4]);
+    ctx.strokeRect(c1.x, c1.y, W, H);
+    ctx.setLineDash([]);
+
+    // An arrow up the slope, from the low end toward the high end.
+    const mid = {x:(c1.x+c2.x)/2, y:(c1.y+c2.y)/2};
+    const up = s.hHi >= s.hLo ? 1 : -1;
+    ctx.strokeStyle = isSel ? COL.sel : '#9678C8';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    if(s.axis === 'x'){
+      const x0 = mid.x - W*0.3*up, x1 = mid.x + W*0.3*up;
+      ctx.moveTo(x0, mid.y); ctx.lineTo(x1, mid.y);
+      ctx.moveTo(x1, mid.y); ctx.lineTo(x1 - 7*up, mid.y-4);
+      ctx.moveTo(x1, mid.y); ctx.lineTo(x1 - 7*up, mid.y+4);
+    }else{
+      const y0 = mid.y - H*0.3*up, y1 = mid.y + H*0.3*up;
+      ctx.moveTo(mid.x, y0); ctx.lineTo(mid.x, y1);
+      ctx.moveTo(mid.x, y1); ctx.lineTo(mid.x-4, y1 - 7*up);
+      ctx.moveTo(mid.x, y1); ctx.lineTo(mid.x+4, y1 - 7*up);
+    }
+    ctx.stroke();
+
+    // The two end heights, and the line where headroom runs out.
+    ctx.font = '10px var(--font)';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = isSel ? COL.sel : '#B9A3DC';
+    if(s.axis === 'x'){
+      ctx.fillText(fmtD(s.hLo), c1.x + 26, mid.y - 14);
+      ctx.fillText(fmtD(s.hHi), c2.x - 26, mid.y - 14);
+    }else{
+      ctx.fillText(fmtD(s.hLo), mid.x, c1.y + 12);
+      ctx.fillText(fmtD(s.hHi), mid.x, c2.y - 12);
+    }
+
+    const t = slopeCrossing(s, HEADROOM_MM);
+    if(t !== null){
+      ctx.strokeStyle = '#E0A63C'; ctx.lineWidth = 1.4; ctx.setLineDash([5,3]);
+      ctx.beginPath();
+      if(s.axis === 'x'){
+        const x = c1.x + W*t;
+        ctx.moveTo(x, c1.y); ctx.lineTo(x, c2.y);
+      }else{
+        const y = c1.y + H*t;
+        ctx.moveTo(c1.x, y); ctx.lineTo(c2.x, y);
+      }
+      ctx.stroke(); ctx.setLineDash([]);
+      if(isSel){
+        ctx.fillStyle = '#E0A63C';
+        ctx.font = '9px var(--font)';
+        if(s.axis === 'x') ctx.fillText(fmtD(HEADROOM_MM), c1.x + W*t, c1.y - 8);
+        else               ctx.fillText(fmtD(HEADROOM_MM), c2.x + 22, c1.y + H*t);
+      }
+    }
+    ctx.restore();
+
+    if(s.locked) drawLockBadge(mid.x, mid.y + 16);
+    if(isSel && !isDrag) drawSlopeDims(s, bb);
+  }
+}
+
+// Size and position, clickable like everything else.
+function drawSlopeDims(s, bb){
+  const a = toC(bb.x1, bb.y1), b = toC(bb.x2, bb.y2);
+  drawDimLine(a.x, b.y, b.x, b.y, fmtD(s.width), 1, {type:'slope-dim', slope:s, which:'width'}, true);
+  drawDimLine(b.x, a.y, b.x, b.y, fmtD(s.depth), 1, {type:'slope-dim', slope:s, which:'depth'}, true);
 }
 
 function addFitting(){
@@ -3221,6 +3496,7 @@ function deleteSelected(){
   kitchenUnits = kitchenUnits.filter(x => x !== target);
   furniture    = furniture.filter(x => x !== target);
   fittings     = fittings.filter(x => x !== target);
+  slopes       = slopes.filter(x => x !== target);
   // Anything snapped to a deleted corner goes back to floating.
   for(const o of openings.concat(fittings)){
     if(o.snapCorner === target){ o.snapCorner = null; o.snapType = null; o.snapped = false; }
@@ -3274,6 +3550,7 @@ function snapshot(){
     kitchenUnits: kitchenUnits.map(strip),
     furniture:    furniture.map(strip),
     fittings:     fittings.map(strip),
+    slopes,
   }));
 }
 
@@ -3335,6 +3612,17 @@ function applySnapshot(s){
   kitchenUnits = s.kitchenUnits || [];
   furniture    = s.furniture    || [];
   fittings     = s.fittings     || [];
+  slopes       = s.slopes       || [];
+  for(const z of slopes){
+    z.type ??= 'slope';
+    z.width ??= SLOPE_DEFAULTS.width;
+    z.depth ??= SLOPE_DEFAULTS.depth;
+    z.axis ??= SLOPE_DEFAULTS.axis;
+    z.hLo ??= SLOPE_DEFAULTS.hLo;
+    z.hHi ??= roomCeil;
+    z.cx ??= roomW/2;
+    z.cy ??= roomH/2;
+  }
   for(const f of fittings){
     const spec = FITTING_SPECS[f.fitType] || FITTING_SPECS.socket2;
     f.type ??= 'fitting';
@@ -3460,7 +3748,7 @@ function clearAll(){
   if(!total) return;
   pushHistory();
   drawnWalls = []; wallPieces = []; corners = []; openings = [];
-  roomLabels = []; kitchenUnits = []; furniture = []; fittings = [];
+  roomLabels = []; kitchenUnits = []; furniture = []; fittings = []; slopes = [];
   selectedItem = null;
   showSelected(); requestDraw();
   status('Cleared — Undo will bring it back');
@@ -3588,6 +3876,8 @@ function pickAt(mx, my){
   for(const c of corners)      if(ptInTri(mx,my,c)) return c;
   for(const l of roomLabels)   if(ptInLabel(mx,my,l)) return l;
   for(const w of drawnWalls)   if(ptInDrawnWall(mx,my,w)) return w;
+  // Slope zones are large background areas, so they come last.
+  for(const s of slopes)       if(ptInSlope(mx,my,s)) return s;
   return null;
 }
 
@@ -3694,6 +3984,9 @@ canvas.addEventListener('pointermove', e => {
         snapDoor(d);
       }
       status(d.snapped ? 'Release to place' : 'Drag to a wall to snap');
+    }else if(slopes.includes(d)){
+      d.cx = sg(raw.x-dragOffX); d.cy = sg(raw.y-dragOffY);
+      status(`Sloped ceiling — ${fmtD(d.hLo)} rising to ${fmtD(d.hHi)}`);
     }else if(fittings.includes(d)){
       d.cx = clamp(raw.x-dragOffX, 0, roomW);
       d.cy = clamp(raw.y-dragOffY, 0, roomH);
@@ -4110,6 +4403,37 @@ function showSelected(){
       }));
     }
     info.append(lockBtn(it), delBtn());
+  }else if(slopes.includes(it)){
+    const lowest = Math.min(it.hLo, it.hHi), highest = Math.max(it.hLo, it.hHi);
+    const cross = slopeCrossing(it, HEADROOM_MM);
+    const runMm = it.axis === 'x' ? it.width : it.depth;
+    info.append(
+      heading('Sloped ceiling'),
+      readout('Falls to', fmtD(lowest) + ' at its low end'),
+      selField('Slopes along', [['y','Up the plan (Y)'],['x','Across the plan (X)']], it.axis, v => {
+        it.axis = v;
+      }),
+      numField('Height at low edge (mm)', it.hLo, v => { it.hLo = Math.max(0, v); }),
+      numField('Height at high edge (mm)', it.hHi, v => { it.hHi = Math.max(0, v); }),
+      btn('Reverse the slope', () => {
+        pushHistory();
+        const t = it.hLo; it.hLo = it.hHi; it.hHi = t;
+        showSelected(); requestDraw();
+      }),
+      numField('Width (mm)', it.width, v => { it.width = Math.max(100, v); }, {min:100}),
+      numField('Depth (mm)', it.depth, v => { it.depth = Math.max(100, v); }, {min:100}),
+      el('div', {cls:'hint', text:
+        (highest > roomCeil
+          ? `The high end is above the ${fmtD(roomCeil)} ceiling, so it has no effect there. `
+          : '')
+        + (cross !== null
+          ? `Headroom drops below ${fmtD(HEADROOM_MM)} over the last `
+            + `${fmtD(Math.round(runMm*(it.hHi > it.hLo ? cross : 1-cross)))} of the run.`
+          : lowest >= HEADROOM_MM
+            ? `Stays above ${fmtD(HEADROOM_MM)} throughout.`
+            : `Below ${fmtD(HEADROOM_MM)} across the whole zone.`)}),
+      lockBtn(it), delBtn()
+    );
   }else if(fittings.includes(it)){
     info.append(
       heading(it.label),
@@ -4367,6 +4691,22 @@ function computeSchedule(){
     a.radType.localeCompare(b.radType) || a.width - b.width);
   const radTotal = rads.reduce((n,r) => n+r.count, 0);
 
+  // Sloped ceilings: how much floor has restricted headroom.
+  let slopeAreaMm2 = 0, lowHeadAreaMm2 = 0, lowestCeil = roomCeil;
+  for(const z of slopes){
+    const bb = slopeBB(z);
+    const w = Math.max(0, Math.min(bb.x2, roomW) - Math.max(bb.x1, 0));
+    const d = Math.max(0, Math.min(bb.y2, roomH) - Math.max(bb.y1, 0));
+    slopeAreaMm2 += w*d;
+    lowestCeil = Math.min(lowestCeil, z.hLo, z.hHi);
+    // The part of the run below the headroom line.
+    const t = slopeCrossing(z, HEADROOM_MM);
+    const runFrac = t === null
+      ? (Math.min(z.hLo, z.hHi) < HEADROOM_MM ? 1 : 0)
+      : (z.hHi > z.hLo ? t : 1-t);
+    lowHeadAreaMm2 += w*d*runFrac;
+  }
+
   // Electrical fittings, grouped by type and mounting height.
   const fitMap = new Map();
   for(const f of fittings){
@@ -4405,6 +4745,8 @@ function computeSchedule(){
     netWallAreaMm2: Math.max(0, wallAreaMm2 - openingAreaMm2),
     units, unitTotal, worktopMm, furn, doors, windows, internalWallMm,
     fits, fitTotal, rads, radTotal, radWatts,
+    slopeCount:slopes.length, slopeAreaMm2, lowHeadAreaMm2, lowestCeil,
+    standingAreaMm2: Math.max(0, areaMm2 - lowHeadAreaMm2),
     cost:{lines, grand}
   };
 }
@@ -4476,6 +4818,18 @@ function refreshSchedule(){
       s.furn.map(f => [f.label, f.width+'×'+f.depth, String(f.count)]),
       ['Total items', '', String(s.furn.reduce((n,f) => n+f.count, 0))]
     ));
+  }
+
+  if(s.slopeCount){
+    body.append(el('div', {cls:'divider'}));
+    body.append(heading('Sloped ceilings'));
+    body.append(table(null, [
+      ['Zones', String(s.slopeCount)],
+      ['Area under a slope', fmtArea(s.slopeAreaMm2)],
+      ['Lowest ceiling', fmtD(s.lowestCeil)],
+      [`Floor under ${fmtD(HEADROOM_MM)}`, fmtArea(s.lowHeadAreaMm2)],
+      [`Floor with full headroom`, fmtArea(s.standingAreaMm2)],
+    ]));
   }
 
   if(s.rads.length){
@@ -4793,6 +5147,32 @@ function planPage(denom){
   // Room outline
   g.ink(INK.room).lw(1.4);
   g.re(X(0), Y(roomH), roomW*k, roomH*k).S();
+
+  // Sloped ceilings, hatched, with their end heights and the headroom line
+  for(const z of slopes){
+    const bb = slopeBB(z);
+    g.q();
+    g.fill(tint(hexRgb('#9678C8'), 0.82)).ink(hexRgb('#9678C8')).lw(0.6).dash([3,2]);
+    g.re(X(bb.x1), Y(bb.y2), (bb.x2-bb.x1)*k, (bb.y2-bb.y1)*k).B();
+    g.dash(null);
+    const midX = X((bb.x1+bb.x2)/2), midY = Y((bb.y1+bb.y2)/2);
+    g.fill(shade(hexRgb('#9678C8'), 0.35));
+    g.text(midX, midY + 3, 5, `${z.hLo} to ${z.hHi}`, {align:'c'});
+    g.text(midX, midY - 4, 4.5, 'sloped ceiling', {align:'c'});
+    const t = slopeCrossing(z, HEADROOM_MM);
+    if(t !== null){
+      g.ink([0.88,0.65,0.24]).lw(0.6).dash([2.5,2]);
+      if(z.axis === 'x'){
+        const x = X(bb.x1 + (bb.x2-bb.x1)*t);
+        g.line(x, Y(bb.y1), x, Y(bb.y2));
+      }else{
+        const y = Y(bb.y1 + (bb.y2-bb.y1)*t);
+        g.line(X(bb.x1), y, X(bb.x2), y);
+      }
+      g.dash(null);
+    }
+    g.Q();
+  }
 
   // Wall pieces
   for(const p of wallPieces){
@@ -5202,6 +5582,15 @@ function schedulePage(){
     cols3('Item', 'Size', 'Qty', true);
     for(const f of s.furn) cols3(f.label, f.width+'x'+f.depth, String(f.count));
     cols3('Total', '', String(s.furn.reduce((n,f) => n+f.count, 0)), true);
+    gap();
+  }
+
+  if(s.slopeCount){
+    sectionTitle('Sloped ceilings');
+    row('Zones', String(s.slopeCount));
+    row('Lowest ceiling', fmtD(s.lowestCeil));
+    row(`Floor under ${fmtD(HEADROOM_MM)}`, fmtArea(s.lowHeadAreaMm2));
+    row('Floor with full headroom', fmtArea(s.standingAreaMm2), true);
     gap();
   }
 

@@ -47,6 +47,19 @@ set in the sidebar.
 **Kitchen units** — base, wall, tall and island, with real carcass and door depths.
 Wall units are drawn dashed to show they are overhead.
 
+**Sloped ceilings** — a rectangular zone where the ceiling ramps between two
+heights, for the soffit over a staircase or a raked loft ceiling. Drag it over the
+stairs and set a height at each edge; everywhere outside the zone stays at the room
+ceiling height, and where zones overlap the lowest wins.
+
+What it is really for is headroom. In plan the zone is shaded, darkest at the low
+end, with an arrow up the slope and a dashed line marking where the ceiling passes
+2000mm. In Elevation the ceiling itself becomes a ramp, the wall is clipped beneath
+it, and anything taller than the ceiling above it — a 2100mm tall unit under a
+1400mm soffit — is outlined in red and labelled with how much too tall it is. The
+schedule reports the area under a slope, the lowest ceiling, and how much floor has
+full headroom against how much does not.
+
 **Radiators** — Type 11 single panel, Type 21 single plus, Type 22 double panel and
 towel rails. Panel depth follows the type (60 / 80 / 100mm), which matters in plan
 because a double panel stands noticeably further into the room. Standard lengths from

@@ -129,11 +129,13 @@ const exposed = `
   ptInFitting, fittingBB, drawFittings, FITTING_SPECS, pointInPoly,
   addRadiator, radOutput, RAD_SPECS, RAD_MOUNT_H, RAD_DEFAULTS,
   get dimHitAreas(){return dimHitAreas}, openDim, confirmDim, hitTest,
+  get slopes(){return slopes}, addSlope, slopeBB, ptInSlope, ceilingAt,
+  slopeCrossing, elevCeilingAt, elevHasSlope, HEADROOM_MM, SLOPE_DEFAULTS,
   get past(){return past}, get future(){return future},
   set selectedItem(v){selectedItem=v}, get selectedItem(){return selectedItem},
   addWallPiece, addCorner, addKitchenUnit, addFurniture, addDoor, addWindow,
   deleteSelected, undo, redo, pushHistory, snapshot, applySnapshot,
-  computeSchedule, wallChain, elevItems, elevInfo, setView, fitView, drawPlan, drawElevation,
+  computeSchedule, wallChain, elevItems, elevInfo, setView, fitView, draw, drawPlan, drawElevation,
   planPage, schedulePage, buildPdf, roomData, boxes, boxBB, snapBox, snapDoor, wpBB,
   boxNearestObjects, cornerShadow, clipToSlab, cornerOverlapArea,
   slideBoxClear, slidePieceClear, settlePiece, settleBox, clearOfCorners, firstSnap, reSnap,
@@ -666,6 +668,178 @@ check('clipByConvex intersects two rotated rectangles', () => {
   return Math.abs(area-expect) < 1
     ? `${Math.round(area)}mm2, matches the expected octagon`
     : fail(`${Math.round(area)} vs expected ${Math.round(expect)}`);
+});
+
+// ── Sloped ceilings ──────────────────────────────────────────────────────────
+check('one click adds a sloped ceiling zone', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  if(!z) return fail('nothing added');
+  const bad = [];
+  if(z.width !== 1000) bad.push(`width ${z.width}`);
+  if(z.depth !== 2400) bad.push(`depth ${z.depth}`);
+  if(z.hHi !== api.roomCeil) bad.push(`high end ${z.hHi}, expected the ceiling ${api.roomCeil}`);
+  if(z.hLo >= z.hHi) bad.push(`low end ${z.hLo} is not below the high end`);
+  if(api.selectedItem !== z) bad.push('not left selected');
+  return bad.length ? fail(bad.join('; '))
+    : `${z.width}×${z.depth}mm, ${z.hLo}mm rising to ${z.hHi}mm, selected`;
+});
+
+check('the ceiling ramps across the zone and is flat outside it', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  z.cx = 2000; z.cy = 2000; z.width = 1000; z.depth = 2000;
+  z.axis = 'y'; z.hLo = 1000; z.hHi = 2400;
+  const bb = api.slopeBB(z);          // y 1000..3000
+  const at = y => api.ceilingAt(2000, y);
+  const lo = at(bb.y1 + 1), mid = at((bb.y1+bb.y2)/2), hi = at(bb.y2 - 1);
+  const outside = api.ceilingAt(6000, 2000);
+  const bad = [];
+  if(Math.abs(lo - 1000) > 2) bad.push(`low edge ${lo.toFixed(0)}, expected 1000`);
+  if(Math.abs(mid - 1700) > 2) bad.push(`midpoint ${mid.toFixed(0)}, expected 1700`);
+  if(Math.abs(hi - 2400) > 2) bad.push(`high edge ${hi.toFixed(0)}, expected 2400`);
+  if(outside !== api.roomCeil) bad.push(`outside the zone ${outside}, expected ${api.roomCeil}`);
+  return bad.length ? fail(bad.join('; '))
+    : `1000 → ${mid.toFixed(0)} → 2400 across the zone, ${outside} elsewhere`;
+});
+
+check('overlapping zones take the lower ceiling', () => {
+  emptyRoom();
+  api.addSlope();
+  api.addSlope();
+  const [a, b] = api.slopes;
+  a.cx = 2000; a.cy = 2000; a.width = 2000; a.depth = 2000; a.hLo = 2000; a.hHi = 2000;
+  b.cx = 2000; b.cy = 2000; b.width = 2000; b.depth = 2000; b.hLo = 1400; b.hHi = 1400;
+  const h = api.ceilingAt(2000, 2000);
+  return h === 1400 ? 'took 1400 over 2000' : fail(`got ${h}, expected 1400`);
+});
+
+check('the headroom crossing point is found', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  z.hLo = 1000; z.hHi = 3000;              // 2000 sits exactly halfway
+  const t = api.slopeCrossing(z, api.HEADROOM_MM);
+  if(t === null) return fail('no crossing found');
+  if(Math.abs(t - 0.5) > 0.001) return fail(`crossing at ${t}, expected 0.5`);
+  // And none reported when the whole zone is above or below the line.
+  z.hLo = 2200; z.hHi = 2400;
+  const none = api.slopeCrossing(z, api.HEADROOM_MM);
+  return none === null
+    ? `crossing at halfway when spanning 1000-3000, none when wholly above`
+    : fail(`expected no crossing for a 2200-2400 zone, got ${none}`);
+});
+
+check('the elevation ceiling follows the slope', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  // A zone along the top wall, sloping across the room's width.
+  z.cx = 2000; z.cy = 500; z.width = 4000; z.depth = 1000;
+  z.axis = 'x'; z.hLo = 1200; z.hHi = 2400;
+  document.getElementById('elev-wall').value = 'top';
+  const info = api.elevInfo();
+  if(!api.elevHasSlope(info)) return fail('the top wall elevation did not notice the slope');
+  const bb = api.slopeBB(z);               // x 0..4000
+  const left = api.elevCeilingAt(info, bb.x1 + 10);
+  const right = api.elevCeilingAt(info, bb.x2 - 10);
+  const beyond = api.elevCeilingAt(info, 7000);
+  if(!(left < right)) return fail(`left ${left.toFixed(0)} not below right ${right.toFixed(0)}`);
+  if(Math.abs(beyond - api.roomCeil) > 0.5) return fail(`beyond the zone ${beyond}`);
+  api.setView('elev'); api.drawElevation(); api.setView('plan');
+  return `ceiling rises ${left.toFixed(0)} → ${right.toFixed(0)} across the zone, `
+    + `${beyond} beyond it`;
+});
+
+check('a wall with no slope over it still reads as flat', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  z.cx = 2000; z.cy = 500; z.width = 2000; z.depth = 800;   // near the top wall only
+  document.getElementById('elev-wall').value = 'bottom';
+  const info = api.elevInfo();
+  const flat = !api.elevHasSlope(info);
+  api.setView('elev'); api.drawElevation(); api.setView('plan');
+  return flat ? 'the bottom wall elevation is unaffected'
+              : fail('the bottom wall thinks it is sloped');
+});
+
+check('the schedule reports restricted headroom', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  z.cx = 1000; z.cy = 1000; z.width = 2000; z.depth = 2000;
+  z.axis = 'y'; z.hLo = 1000; z.hHi = 3000;    // half the run is under 2000
+  const s = api.computeSchedule();
+  const zoneArea = 2000*2000;
+  if(s.slopeCount !== 1) return fail(`slopeCount ${s.slopeCount}`);
+  if(Math.abs(s.slopeAreaMm2 - zoneArea) > 1) return fail(`zone area ${s.slopeAreaMm2}`);
+  if(Math.abs(s.lowHeadAreaMm2 - zoneArea/2) > 1)
+    return fail(`low-headroom area ${s.lowHeadAreaMm2}, expected ${zoneArea/2}`);
+  if(s.lowestCeil !== 1000) return fail(`lowest ceiling ${s.lowestCeil}`);
+  if(Math.abs(s.standingAreaMm2 - (s.areaMm2 - zoneArea/2)) > 1)
+    return fail(`standing area ${s.standingAreaMm2}`);
+  return `${fmtA(s.slopeAreaMm2)} under a slope, ${fmtA(s.lowHeadAreaMm2)} below 2m, `
+    + `${fmtA(s.standingAreaMm2)} with full headroom, lowest ${s.lowestCeil}mm`;
+});
+function fmtA(mm2){ return (mm2/1e6).toFixed(2) + 'm2'; }
+
+check('a slope zone can be selected, dimensioned, saved and deleted', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  z.cx = 3000; z.cy = 2000;
+  api.selectedItem = z;
+  // draw() clears the hit areas first; drawPlan() only appends to them.
+  api.draw();
+  const dims = api.dimHitAreas.filter(h => h.tag && h.tag.type === 'slope-dim');
+  if(dims.length !== 2) return fail(`${dims.length} clickable dimensions, expected 2`);
+  // Retype the width on the canvas.
+  const wDim = dims.find(d => d.tag.which === 'width');
+  api.openDim(wDim.tag, wDim.bx, wDim.by);
+  document.getElementById('dim-inp').value = '1800';
+  api.confirmDim();
+  if(z.width !== 1800) return fail(`width ${z.width} after typing 1800`);
+
+  // Round trip, then a PDF, then delete.
+  api.applySnapshot(JSON.parse(JSON.stringify(api.roomData())));
+  const after = api.slopes[0];
+  if(!after) return fail('the zone was lost on reload');
+  if(after.width !== 1800 || after.hLo !== z.hLo || after.axis !== z.axis)
+    return fail(`reloaded as ${after.width}/${after.hLo}/${after.axis}`);
+  const p = api.planPage(50);
+  if(!/sloped ceiling/.test(p.content)) return fail('not labelled in the PDF');
+  api.selectedItem = after;
+  api.deleteSelected();
+  return api.slopes.length === 0
+    ? `2 dimensions, retyped to ${after.width}mm, survived reload, drawn in the PDF, deleted`
+    : fail(`${api.slopes.length} left after delete`);
+});
+
+check('a tall unit under the low end is flagged in elevation', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  z.cx = 1000; z.cy = 400; z.width = 2000; z.depth = 800;
+  z.axis = 'x'; z.hLo = 1400; z.hHi = 1400;      // flat and low, easy to reason about
+  document.getElementById('ku-type').value = 'tall';   // 2100 tall
+  document.getElementById('ku-width').value = '600';
+  api.addKitchenUnit();
+  const ku = api.kitchenUnits[0];
+  ku.cx = 1000; ku.cy = 300;
+  api.snapBox(ku);
+  document.getElementById('elev-wall').value = 'top';
+  const info = api.elevInfo();
+  const items = api.elevItems(info);
+  const unit = items.find(i => i.obj === ku);
+  if(!unit) return fail('the unit is not in the elevation');
+  const ceil = api.elevCeilingAt(info, (unit.a1+unit.a2)/2);
+  api.setView('elev'); api.drawElevation(); api.setView('plan');   // exercises the flag
+  return unit.z2 > ceil
+    ? `a ${unit.z2}mm unit under a ${ceil.toFixed(0)}mm ceiling — ${Math.round(unit.z2-ceil)}mm too tall`
+    : fail(`unit top ${unit.z2} vs ceiling ${ceil}, expected a clash to flag`);
 });
 
 // ── Radiators ────────────────────────────────────────────────────────────────
