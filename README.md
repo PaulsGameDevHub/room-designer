@@ -115,8 +115,15 @@ to get an indicative cost.
   screen, so it cannot disagree with what you see.
 - **`.room.json`** — the full model. Files saved by earlier versions still load.
 
-**Autosave** — the current room is written to `localStorage` and restored next time, so
-closing the tab no longer loses the plan.
+**Autosave** — the current room is written to `localStorage` so closing the tab does
+not lose it. On opening, if there was anything there, it is restored and a prompt
+asks whether to keep it or start empty, listing what it found and when it last
+changed. Starting empty keeps the room size, clears the contents, and overwrites the
+stored session so it cannot reappear. Escape keeps the work.
+
+Storage is per address, so the hosted copy and a local `file://` copy remember
+separate sessions. Use Save for anything you want to keep properly — autosave is a
+safety net, not a filing system.
 
 ## Keyboard
 

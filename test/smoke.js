@@ -68,6 +68,7 @@ const IDS = ['canvas','canvas-wrap','status','sidebar','toolbar','dim-editor','d
   'schedule-panel','schedule-body','snap-grid','show-dims','btn-select','btn-label','btn-kitchen',
   'btn-furniture','btn-schedule','btn-undo','btn-redo','btn-plan','btn-elev','elev-wall','load-input',
   'pdf-scale', 'status-msg', 'build', 'btn-wall',
+  'restore-dialog', 'restore-summary',
   'btn-electric', 'electric-panel', 'fit-type', 'fit-height', 'fit-size-display',
   ];
 for(const id of IDS) byId[id] = mkEl(id === 'canvas' ? 'canvas' : 'div', id);
@@ -149,6 +150,8 @@ const exposed = `
   settleInRun, settleInAngledRun, separateUnits, anchorBox,
   releaseSnap, cornerGeometry, refreshSchedule, showSelected, applyRoom, setBoxRot,
   writeAutosave, restoreAutosave, exportPDF, exportPNG, saveRoom, textWidthPt,
+  offerRestore, restoreKeep, restoreNew, sessionSummary, whenAgo,
+  get lastRestored(){return lastRestored},
   KU_SPECS, FURN_SPECS,
 };
 `;
@@ -2218,13 +2221,103 @@ check('legacy opening still gets a bounding box', () => {
   return true;
 });
 
-check('autosave writes and restores', () => {
+// ── Being asked, rather than silently handed the last session ────────────────
+check('a saved session with contents offers a choice on opening', () => {
+  emptyRoom();
+  dropUnit(600, 2000, 250);
+  api.addWallPiece();
   api.writeAutosave();
-  const raw = localStorage.getItem('roomdesigner.autosave.v16');
-  if(!raw) return false;
-  api.applySnapshot({roomW:1000, roomH:1000, wallPieces:[], corners:[], openings:[], roomLabels:[], kitchenUnits:[], furniture:[], drawnWalls:[]});
+
+  // Simulate opening again: read it back, then offer it.
+  api.applySnapshot({roomW:3000, roomH:3000, roomCeil:2400, drawnWalls:[], corners:[],
+    roomLabels:[], openings:[], kitchenUnits:[], furniture:[], wallPieces:[], fittings:[], slopes:[]});
+  if(!api.restoreAutosave()) return fail('nothing was restored');
+  api.offerRestore(api.lastRestored);
+  const shown = byId['restore-dialog'].style.display === 'flex';
+  const text = byId['restore-summary'].textContent;
+  if(!shown) return fail('the dialog was not shown');
+  if(!/kitchen unit/.test(text) || !/wall piece/.test(text))
+    return fail(`summary does not list the contents: "${text}"`);
+  return `dialog shown — "${text}"`;
+});
+
+check('keeping the session leaves it exactly as restored', () => {
+  const before = [api.kitchenUnits.length, api.wallPieces.length, api.roomW];
+  api.restoreKeep();
+  const after = [api.kitchenUnits.length, api.wallPieces.length, api.roomW];
+  if(byId['restore-dialog'].style.display !== 'none') return fail('the dialog stayed up');
+  return before.join(',') === after.join(',')
+    ? `kept ${after[0]} unit and ${after[1]} wall piece in the ${after[2]}mm room`
+    : fail(`${before} became ${after}`);
+});
+
+check('starting empty clears the contents but keeps the room size', () => {
+  emptyRoom();
+  dropUnit(600, 2000, 250);
+  api.addWallPiece();
+  api.addSlope();
+  const size = [api.roomW, api.roomH, api.roomCeil];
+  api.writeAutosave();
+  api.restoreNew();
+
+  const n = api.kitchenUnits.length + api.wallPieces.length + api.slopes.length
+          + api.furniture.length + api.fittings.length + api.openings.length;
+  if(n !== 0) return fail(`${n} items left behind`);
+  if([api.roomW, api.roomH, api.roomCeil].join(',') !== size.join(','))
+    return fail(`room size changed to ${api.roomW}x${api.roomH}x${api.roomCeil}`);
+  if(byId['restore-dialog'].style.display !== 'none') return fail('the dialog stayed up');
+
+  // And the old session must not come back on the next open.
+  const raw = JSON.parse(localStorage.getItem('roomdesigner.autosave.v16'));
+  const stored = (raw.kitchenUnits || []).length + (raw.wallPieces || []).length
+               + (raw.slopes || []).length;
+  return stored === 0
+    ? `emptied, ${size[0]} × ${size[1]}mm room kept, and the stored session overwritten`
+    : fail(`the stored session still holds ${stored} items, so it would return`);
+});
+
+check('an empty saved session does not prompt at all', () => {
+  emptyRoom();
+  api.writeAutosave();
+  byId['restore-dialog'].style.display = 'none';
+  api.applySnapshot({roomW:3000, roomH:3000, roomCeil:2400, drawnWalls:[], corners:[],
+    roomLabels:[], openings:[], kitchenUnits:[], furniture:[], wallPieces:[], fittings:[], slopes:[]});
+  api.restoreAutosave();
+  // This mirrors the startup guard: only prompt when something was actually there.
+  const total = api.kitchenUnits.length + api.wallPieces.length + api.slopes.length
+              + api.furniture.length + api.fittings.length + api.openings.length
+              + api.corners.length + api.drawnWalls.length + api.roomLabels.length;
+  return total === 0
+    ? 'nothing stored to carry over, so no prompt'
+    : fail(`${total} items found in what should be an empty session`);
+});
+
+check('the saved-at time reads back in plain words', () => {
+  const cases = [[30*1000,'just now'], [5*60*1000,'5 minutes ago'],
+                 [2*3600*1000,'2 hours ago'], [3*86400000,'3 days ago']];
+  const bad = cases.filter(([ms, want]) => api.whenAgo(Date.now()-ms) !== want)
+    .map(([ms, want]) => `${want} came out as "${api.whenAgo(Date.now()-ms)}"`);
+  return bad.length ? fail(bad.join('; '))
+    : cases.map(([,w]) => w).join(', ');
+});
+
+check('autosave writes and restores', () => {
+  // Own fixture with a distinctive size, so this cannot ride on test order.
+  emptyRoom({roomW:4321, roomH:2345, roomCeil:2550});
+  dropUnit(600, 2000, 250);
+  api.writeAutosave();
+  if(!localStorage.getItem('roomdesigner.autosave.v16')) return fail('nothing was written');
+
+  api.applySnapshot({roomW:1000, roomH:1000, roomCeil:2400, wallPieces:[], corners:[],
+    openings:[], roomLabels:[], kitchenUnits:[], furniture:[], drawnWalls:[], fittings:[], slopes:[]});
   const ok = api.restoreAutosave();
-  return ok && api.roomW === 4000 ? `restored roomW=${api.roomW}` : fail(`ok=${ok} roomW=${api.roomW}`);
+  const bad = [];
+  if(!ok) bad.push('restore reported failure');
+  if(api.roomW !== 4321 || api.roomH !== 2345 || api.roomCeil !== 2550)
+    bad.push(`room came back as ${api.roomW}x${api.roomH}x${api.roomCeil}`);
+  if(api.kitchenUnits.length !== 1) bad.push(`${api.kitchenUnits.length} units restored, expected 1`);
+  return bad.length ? fail(bad.join('; '))
+    : `restored a ${api.roomW}×${api.roomH}mm room with ${api.kitchenUnits.length} unit`;
 });
 
 // ── PDF ────────────────────────────────────────────────────────────────────

@@ -65,10 +65,33 @@ table.sched td{padding:3px 2px;border-bottom:1px solid var(--bd3);}
 table.sched td.n{text-align:right;font-variant-numeric:tabular-nums;}
 table.sched tr.total td{font-weight:600;border-top:1px solid var(--bd);border-bottom:none;}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);}
+
+#restore-dialog{position:fixed;inset:0;z-index:200;display:none;align-items:center;
+  justify-content:center;background:rgba(10,10,14,0.72);backdrop-filter:blur(3px);}
+#restore-dialog .card{background:var(--bg);border:1px solid var(--bd);border-radius:10px;
+  padding:20px 22px;max-width:440px;box-shadow:0 12px 40px rgba(0,0,0,0.5);}
+#restore-dialog h2{font-size:15px;font-weight:600;margin-bottom:8px;}
+#restore-dialog .row{display:flex;gap:8px;margin-top:14px;}
+#restore-dialog .row button{flex:1;padding:8px 10px;}
+#restore-summary{font-size:12px;color:var(--fg2);line-height:1.6;}
 </style>
 </head>
 <body>
 <h1 class="sr-only">Room Designer — plan and elevation drawing tool</h1>
+
+<div id="restore-dialog">
+  <div class="card">
+    <h2>Carry on where you left off?</h2>
+    <div id="restore-summary"></div>
+    <div class="row">
+      <button class="primary" onclick="restoreKeep()">Keep this</button>
+      <button onclick="restoreNew()">Start empty</button>
+    </div>
+    <div class="hint" style="margin-top:10px;">Start empty keeps the room size and
+      clears everything in it. Plans are only kept between visits for this one
+      address — use Save to keep a plan as a file you can reload anywhere.</div>
+  </div>
+</div>
 <div id="app">
   <div id="toolbar">
     <button id="btn-select" class="active" onclick="setMode('select')">Select</button>
@@ -245,7 +268,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-14 21:31';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-14 22:00';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -406,6 +429,7 @@ let panning = false, panStart = null, spaceDown = false;
 let userAdjustedView = false;
 let past = [], future = [];
 let drawQueued = false, autosaveTimer = null, suppressAutosave = false;
+let lastRestored = null;   // the session read back from storage, if there was one
 
 // Every collection that holds selectable, deletable items.
 const COLLECTIONS = () => [drawnWalls, wallPieces, corners, openings, roomLabels, kitchenUnits, furniture, fittings, slopes];
@@ -4311,6 +4335,8 @@ window.addEventListener('keydown', e => {
   if(mod) return;
 
   if(e.key === 'Escape'){
+    // Escape on the restore prompt keeps the work, the safer of the two.
+    if($('restore-dialog').style.display === 'flex'){ restoreKeep(); return; }
     if(activeDim){ cancelDim(); return; }
     if(drawStart){ cancelDrawing(); return; }
     if(mode !== 'select'){ setMode('select'); return; }
@@ -5910,7 +5936,7 @@ function scheduleAutosave(){
 }
 function writeAutosave(){
   try{
-    localStorage.setItem(STORE_KEY, JSON.stringify(roomData()));
+    localStorage.setItem(STORE_KEY, JSON.stringify(Object.assign(roomData(), {savedAt:Date.now()})));
   }catch(err){
     // A full or blocked store is not worth interrupting the user for.
     console.warn('Autosave failed:', err.message);
@@ -5923,6 +5949,7 @@ function restoreAutosave(){
   try{
     const data = JSON.parse(raw);
     if(!data.roomW || !data.roomH) return false;
+    lastRestored = data;
     suppressAutosave = true;
     applySnapshot(data);
     if(data.costRates) costRates = Object.assign(costRates, data.costRates);
@@ -5935,6 +5962,65 @@ function restoreAutosave(){
   }
 }
 window.addEventListener('beforeunload', () => { clearTimeout(autosaveTimer); writeAutosave(); });
+
+// ── Offering the restored session rather than silently applying it ──────────
+// The session is restored so it can be seen, then the choice is put on top of it.
+
+const AGO = [[86400000,'day'],[3600000,'hour'],[60000,'minute']];
+function whenAgo(ms){
+  const d = Date.now() - ms;
+  if(d < 60000) return 'just now';
+  for(const [unit, name] of AGO){
+    if(d >= unit){
+      const n = Math.floor(d/unit);
+      return `${n} ${name}${n === 1 ? '' : 's'} ago`;
+    }
+  }
+  return 'a moment ago';
+}
+
+function sessionSummary(data){
+  const groups = [
+    [data.wallPieces,  'wall piece', 'wall pieces'],
+    [data.drawnWalls,  'drawn wall', 'drawn walls'],
+    [data.corners,     'angled corner', 'angled corners'],
+    [data.openings,    'door or window', 'doors and windows'],
+    [data.kitchenUnits,'kitchen unit', 'kitchen units'],
+    [data.furniture,   'furniture item', 'furniture items'],
+    [data.fittings,    'socket or switch', 'sockets and switches'],
+    [data.slopes,      'sloped ceiling', 'sloped ceilings'],
+    [data.roomLabels,  'label', 'labels'],
+  ];
+  return groups
+    .filter(([a]) => a && a.length)
+    .map(([a, one, many]) => `${a.length} ${a.length === 1 ? one : many}`);
+}
+
+function offerRestore(data){
+  const parts = sessionSummary(data);
+  $('restore-summary').textContent =
+    `Last time on this address you had ${parts.join(', ')} in a `
+    + `${fmtD(roomW)} × ${fmtD(roomH)} room`
+    + (data.savedAt ? `, changed ${whenAgo(data.savedAt)}.` : '.');
+  $('restore-dialog').style.display = 'flex';
+}
+function restoreKeep(){
+  $('restore-dialog').style.display = 'none';
+  status('Carried on from your last session');
+  requestDraw();
+}
+function restoreNew(){
+  $('restore-dialog').style.display = 'none';
+  drawnWalls = []; wallPieces = []; corners = []; openings = [];
+  roomLabels = []; kitchenUnits = []; furniture = []; fittings = []; slopes = [];
+  past.length = 0; future.length = 0;
+  selectedItem = null;
+  updateHistoryButtons();
+  showSelected();
+  fitView();
+  writeAutosave();          // at once, so the old session cannot come back
+  status(`Started empty — the ${fmtD(roomW)} × ${fmtD(roomH)} room size was kept`);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Startup
@@ -5975,6 +6061,11 @@ if(!restoreAutosave()) status('Set the inside room size, then start placing item
 syncRoomInputs();
 showSelected();
 relayout();
+
+// Something was restored and it is not an empty room, so ask rather than assume.
+if(lastRestored && COLLECTIONS().reduce((n,c) => n+c.length, 0) > 0){
+  offerRestore(lastRestored);
+}
 </script>
 </body>
 </html>
