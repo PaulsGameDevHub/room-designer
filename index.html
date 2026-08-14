@@ -245,7 +245,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-14 21:14';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-14 21:20';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -1771,8 +1771,11 @@ function openDim(tag, cx, cy){
     inp.value = fmtE(tag.slope[tag.which]);
   }else if(tag.type === 'slope-height'){
     const s = tag.slope;
-    lbl.textContent = 'Ceiling height here';
+    lbl.textContent = 'Clear height here';
     inp.value = fmtE(s.hLo + tag.t*(s.hHi - s.hLo));
+  }else if(tag.type === 'slope-drop'){
+    lbl.textContent = 'Drop from the ceiling';
+    inp.value = fmtE(slopeDrop(tag.slope));
   }
 
   const el = $('dim-editor');
@@ -1847,6 +1850,10 @@ function confirmDim(){
     }else{
       if(t < 0.999) s.hLo = (target - t*s.hHi)/(1-t);
     }
+  }else if(tag.type === 'slope-drop'){
+    // Move the whole wedge up or down, keeping its fall.
+    const s = tag.slope;
+    setSlope(s, slopeRot(s), Math.max(0, val), slopeFall(s));
   }else if(tag.type === 'hyp-gap'){
     const it = tag.item, g = itemHypGaps(it);
     if(g){
@@ -2745,6 +2752,17 @@ function drawSlopeElevDims(info){
       const top = toE(pt.a, h), bot = toE(pt.a, 0);
       drawDimLine(bot.x, bot.y, top.x, top.y, fmtD(h), -1,
         {type:'slope-height', slope:s, t:pt.t}, selectedItem === s);
+    }
+
+    // Once the boxing hangs below the ceiling there is a gap worth dimensioning,
+    // and it is easier to set here than in the sidebar.
+    const drop = slopeDrop(s);
+    if(drop > 0){
+      const a = (on.aLo + on.aHi)/2;
+      const boxTop = toE(a, Math.max(s.hLo, s.hHi));
+      const ceil = toE(a, roomCeil);
+      drawDimLine(ceil.x, ceil.y, boxTop.x, boxTop.y, fmtD(drop), 1,
+        {type:'slope-drop', slope:s}, selectedItem === s);
     }
   }
 }

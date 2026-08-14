@@ -1034,6 +1034,41 @@ check('typing a height in elevation sets it exactly', () => {
     : fail(`height at t=${tHigh.toFixed(3)} is ${atHigh.toFixed(1)}, expected 2200`);
 });
 
+check('the drop from the ceiling is editable in elevation once it is non-zero', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  z.cx = 2000; z.cy = 400; z.width = 3000; z.depth = 800;
+  api.setSlope(z, 1, 0, 500);                  // flush with the ceiling to begin
+  document.getElementById('elev-wall').value = 'top';
+  api.selectedItem = z;
+  api.setView('elev');
+  api.draw();
+  const none = api.dimHitAreas.filter(h => h.tag && h.tag.type === 'slope-drop');
+  if(none.length){ api.setView('plan'); return fail('a drop dimension appeared while the drop is 0'); }
+
+  // Now hang it below the ceiling and the gap becomes dimensioned.
+  api.setSlope(z, api.slopeRot(z), 400, 500);
+  api.draw();
+  const dims = api.dimHitAreas.filter(h => h.tag && h.tag.type === 'slope-drop');
+  if(dims.length !== 1){ api.setView('plan'); return fail(`${dims.length} drop dimensions, expected 1`); }
+
+  // Retype it, and the whole wedge should move while keeping its fall.
+  const fallBefore = api.slopeFall(z);
+  api.openDim(dims[0].tag, dims[0].bx, dims[0].by);
+  document.getElementById('dim-inp').value = '250';
+  api.confirmDim();
+  api.setView('plan');
+  const bad = [];
+  if(api.slopeDrop(z) !== 250) bad.push(`drop is ${api.slopeDrop(z)}, expected 250`);
+  if(api.slopeFall(z) !== fallBefore) bad.push(`fall changed ${fallBefore} -> ${api.slopeFall(z)}`);
+  if(Math.max(z.hLo, z.hHi) !== api.roomCeil - 250)
+    bad.push(`top at ${Math.max(z.hLo,z.hHi)}, expected ${api.roomCeil - 250}`);
+  return bad.length ? fail(bad.join('; '))
+    : `hidden at 0, shown at 400, retyped to ${api.slopeDrop(z)}mm with the `
+      + `${api.slopeFall(z)}mm fall intact`;
+});
+
 check('a height typed mid-run solves back to the right end', () => {
   emptyRoom();
   api.addSlope();
