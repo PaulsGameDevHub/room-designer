@@ -129,9 +129,9 @@ const exposed = `
   ptInFitting, fittingBB, drawFittings, FITTING_SPECS, pointInPoly,
   addRadiator, radOutput, RAD_SPECS, RAD_MOUNT_H, RAD_DEFAULTS,
   get dimHitAreas(){return dimHitAreas}, openDim, confirmDim, hitTest,
-  get slopes(){return slopes}, addSlope, slopeBB, ptInSlope, ceilingAt,
-  slopeCrossing, elevCeilingAt, elevHasSlope, HEADROOM_MM, SLOPE_DEFAULTS,
-  slopeOnWall, drawSlopeElevDims, slopeRot, slopeDrop, slopeFall,
+  get slopes(){return slopes}, addSlope, slopeBB, ptInSlope, clearHeightAt,
+  slopeCrossing, elevClearHeightAt, elevHasSlope, HEADROOM_MM, SLOPE_DEFAULTS,
+  slopeOnWall, drawSlopeElevDims, drawSlopeBoxing, slopeRot, slopeDrop, slopeFall,
   setSlope, rotateSlope, snapSlope, SLOPE_DIRS,
   get past(){return past}, get future(){return future},
   set selectedItem(v){selectedItem=v}, get selectedItem(){return selectedItem},
@@ -690,6 +690,46 @@ check('one click adds a 1m square slope falling 300mm from the ceiling', () => {
       + `${api.SLOPE_DIRS[api.slopeRot(z)]}`;
 });
 
+check('a slope leaves the room ceiling height alone', () => {
+  emptyRoom();
+  const before = api.computeSchedule();
+  api.addSlope();
+  const z = api.slopes[0];
+  z.cx = 2000; z.cy = 2000; z.width = 2000; z.depth = 2000;
+  z.axis = 'y';
+  api.setSlope(z, 0, 0, 900);            // a deep 900mm fall
+  const after = api.computeSchedule();
+  const bad = [];
+  if(api.roomCeil !== 2400) bad.push(`roomCeil changed to ${api.roomCeil}`);
+  if(after.wallAreaMm2 !== before.wallAreaMm2)
+    bad.push(`wall area moved ${before.wallAreaMm2} -> ${after.wallAreaMm2}`);
+  // Clear height under the boxing is reduced, but the ceiling above it is not.
+  const bb = api.slopeBB(z);
+  const under = api.clearHeightAt(2000, bb.y2 - 1);
+  if(under >= 2400) bad.push(`clear height under the boxing is ${under}, expected below 2400`);
+  return bad.length ? fail(bad.join('; '))
+    : `ceiling still ${api.roomCeil}mm and wall area unchanged at `
+      + `${(after.wallAreaMm2/1e6).toFixed(2)}m2, with ${Math.round(under)}mm clear under the boxing`;
+});
+
+check('the boxing hangs from the top of the slope, not from the ceiling line', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  z.cx = 2000; z.cy = 400; z.width = 3000; z.depth = 800;
+  z.axis = 'x';
+  api.setSlope(z, 1, 400, 500);          // top 400 below the ceiling, falls 500
+  const top = Math.max(z.hLo, z.hHi), bot = Math.min(z.hLo, z.hHi);
+  if(top !== 2000) return fail(`top of the boxing at ${top}, expected 2000`);
+  if(bot !== 1500) return fail(`underside at ${bot}, expected 1500`);
+  // Above the boxing the ceiling is still the ceiling.
+  document.getElementById('elev-wall').value = 'top';
+  api.setView('elev');
+  api.draw();                            // exercises drawSlopeBoxing
+  api.setView('plan');
+  return `boxing from ${top}mm down to ${bot}mm, ceiling untouched at ${api.roomCeil}mm above it`;
+});
+
 check('rotating the slope turns both the fall and the footprint', () => {
   emptyRoom();
   api.addSlope();
@@ -772,9 +812,9 @@ check('the ceiling ramps across the zone and is flat outside it', () => {
   z.cx = 2000; z.cy = 2000; z.width = 1000; z.depth = 2000;
   z.axis = 'y'; z.hLo = 1000; z.hHi = 2400;
   const bb = api.slopeBB(z);          // y 1000..3000
-  const at = y => api.ceilingAt(2000, y);
+  const at = y => api.clearHeightAt(2000, y);
   const lo = at(bb.y1 + 1), mid = at((bb.y1+bb.y2)/2), hi = at(bb.y2 - 1);
-  const outside = api.ceilingAt(6000, 2000);
+  const outside = api.clearHeightAt(6000, 2000);
   const bad = [];
   if(Math.abs(lo - 1000) > 2) bad.push(`low edge ${lo.toFixed(0)}, expected 1000`);
   if(Math.abs(mid - 1700) > 2) bad.push(`midpoint ${mid.toFixed(0)}, expected 1700`);
@@ -791,7 +831,7 @@ check('overlapping zones take the lower ceiling', () => {
   const [a, b] = api.slopes;
   a.cx = 2000; a.cy = 2000; a.width = 2000; a.depth = 2000; a.hLo = 2000; a.hHi = 2000;
   b.cx = 2000; b.cy = 2000; b.width = 2000; b.depth = 2000; b.hLo = 1400; b.hHi = 1400;
-  const h = api.ceilingAt(2000, 2000);
+  const h = api.clearHeightAt(2000, 2000);
   return h === 1400 ? 'took 1400 over 2000' : fail(`got ${h}, expected 1400`);
 });
 
@@ -822,9 +862,9 @@ check('the elevation ceiling follows the slope', () => {
   const info = api.elevInfo();
   if(!api.elevHasSlope(info)) return fail('the top wall elevation did not notice the slope');
   const bb = api.slopeBB(z);               // x 0..4000
-  const left = api.elevCeilingAt(info, bb.x1 + 10);
-  const right = api.elevCeilingAt(info, bb.x2 - 10);
-  const beyond = api.elevCeilingAt(info, 7000);
+  const left = api.elevClearHeightAt(info, bb.x1 + 10);
+  const right = api.elevClearHeightAt(info, bb.x2 - 10);
+  const beyond = api.elevClearHeightAt(info, 7000);
   if(!(left < right)) return fail(`left ${left.toFixed(0)} not below right ${right.toFixed(0)}`);
   if(Math.abs(beyond - api.roomCeil) > 0.5) return fail(`beyond the zone ${beyond}`);
   api.setView('elev'); api.drawElevation(); api.setView('plan');
@@ -1038,7 +1078,7 @@ check('a tall unit under the low end is flagged in elevation', () => {
   const items = api.elevItems(info);
   const unit = items.find(i => i.obj === ku);
   if(!unit) return fail('the unit is not in the elevation');
-  const ceil = api.elevCeilingAt(info, (unit.a1+unit.a2)/2);
+  const ceil = api.elevClearHeightAt(info, (unit.a1+unit.a2)/2);
   api.setView('elev'); api.drawElevation(); api.setView('plan');   // exercises the flag
   return unit.z2 > ceil
     ? `a ${unit.z2}mm unit under a ${ceil.toFixed(0)}mm ceiling — ${Math.round(unit.z2-ceil)}mm too tall`

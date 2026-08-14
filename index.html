@@ -245,7 +245,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-14 21:01';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-14 21:14';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -2341,16 +2341,16 @@ function elevPlanPointAt(info, along){
   if(info.horiz) return {x:planCoord, y:info.coord === 0 ? inset : info.coord - inset};
   return {x:info.coord === 0 ? inset : info.coord - inset, y:planCoord};
 }
-const elevCeilingAt = (info, along) => {
+const elevClearHeightAt = (info, along) => {
   const p = elevPlanPointAt(info, along);
-  return ceilingAt(p.x, p.y);
+  return clearHeightAt(p.x, p.y);
 };
 // Does any sloped ceiling reach this wall?
 function elevHasSlope(info){
   if(!slopes.length) return false;
   const steps = 40;
   for(let i=0; i<=steps; i++){
-    if(elevCeilingAt(info, info.len*i/steps) < roomCeil - 0.5) return true;
+    if(elevClearHeightAt(info, info.len*i/steps) < roomCeil - 0.5) return true;
   }
   return false;
 }
@@ -2361,62 +2361,25 @@ function drawElevation(){
   const floorY = p0.y, ceilY = p1.y, x0 = p0.x, x1 = p1.x;
   const sloped = elevHasSlope(info);
 
-  // The ceiling profile across this wall, sampled so a slope shows as a ramp.
-  const profile = [];
-  const steps = sloped ? 160 : 1;
-  for(let i=0; i<=steps; i++){
-    const a = info.len*i/steps;
-    profile.push({a, h:sloped ? elevCeilingAt(info, a) : roomCeil});
-  }
-  const profPath = () => {
-    ctx.beginPath();
-    ctx.moveTo(toE(profile[0].a, profile[0].h).x, toE(profile[0].a, profile[0].h).y);
-    for(const pt of profile.slice(1)){
-      const p = toE(pt.a, pt.h);
-      ctx.lineTo(p.x, p.y);
-    }
-  };
-
-  // Wall face, clipped under the ceiling profile so a slope cuts the corner off.
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(toE(0, 0).x, toE(0, 0).y);
-  for(const pt of profile){ const p = toE(pt.a, pt.h); ctx.lineTo(p.x, p.y); }
-  ctx.lineTo(toE(info.len, 0).x, toE(info.len, 0).y);
-  ctx.closePath();
-  ctx.clip();
+  // Wall face. The room's ceiling is untouched by a slope — the slope is boxing
+  // added underneath it, drawn separately below.
   ctx.fillStyle = 'rgba(255,255,255,0.03)';
-  ctx.fillRect(x0, ceilY-200, x1-x0, floorY-ceilY+400);
-  ctx.restore();
+  ctx.fillRect(x0, ceilY, x1-x0, floorY-ceilY);
 
-  // Floor and ceiling slabs
+  // Floor and ceiling slabs, always the full flat ceiling
   const slab = WALL_T*scale;
   ctx.fillStyle = 'rgba(180,180,180,0.18)';
   ctx.fillRect(x0-slab, floorY, x1-x0+slab*2, slab);
-  if(!sloped) ctx.fillRect(x0-slab, ceilY-slab, x1-x0+slab*2, slab);
+  ctx.fillRect(x0-slab, ceilY-slab, x1-x0+slab*2, slab);
   ctx.fillRect(x0-slab, ceilY-slab, slab, floorY-ceilY+slab*2);
   ctx.fillRect(x1,      ceilY-slab, slab, floorY-ceilY+slab*2);
 
-  // A sloping ceiling gets its own slab following the profile.
   if(sloped){
-    ctx.save();
-    ctx.beginPath();
-    for(const pt of profile){ const p = toE(pt.a, pt.h); ctx.lineTo(p.x, p.y); }
-    for(const pt of [...profile].reverse()){
-      const p = toE(pt.a, pt.h);
-      ctx.lineTo(p.x, p.y - slab);
-    }
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(180,180,180,0.18)';
-    ctx.fill();
-    ctx.restore();
-    ctx.strokeStyle = 'rgba(200,200,200,0.5)';
-    ctx.lineWidth = 1.4;
-    profPath();
-    ctx.stroke();
+    drawSlopeBoxing(info);
 
-    // Where headroom runs out, and how low it gets.
-    const low = Math.min(...profile.map(p => p.h));
+    // Where headroom runs out under the boxing, and how low it gets.
+    let low = roomCeil;
+    for(let i=0; i<=160; i++) low = Math.min(low, elevClearHeightAt(info, info.len*i/160));
     if(low < HEADROOM_MM){
       ctx.strokeStyle = '#E0A63C'; ctx.lineWidth = 1; ctx.setLineDash([5,3]);
       const hy = toE(0, HEADROOM_MM).y;
@@ -2425,7 +2388,7 @@ function drawElevation(){
       ctx.font = '9px var(--font)';
       ctx.fillStyle = '#E0A63C';
       ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
-      ctx.fillText(`${fmtD(HEADROOM_MM)} headroom · lowest point ${fmtD(low)}`, x0 + 4, hy - 3);
+      ctx.fillText(`${fmtD(HEADROOM_MM)} headroom · lowest clear height ${fmtD(low)}`, x0 + 4, hy - 3);
     }
   }
 
@@ -2438,22 +2401,9 @@ function drawElevation(){
   }
   ctx.stroke();
 
-  // Room outline: floor, two sides, and the ceiling following its profile.
+  // Room outline. The ceiling stays where it is, slope or no slope.
   ctx.strokeStyle = COL.room; ctx.lineWidth = 2.5; ctx.setLineDash([]);
-  if(sloped){
-    ctx.beginPath();
-    ctx.moveTo(x0, floorY);
-    ctx.lineTo(x1, floorY);
-    ctx.lineTo(toE(info.len, profile[profile.length-1].h).x, toE(info.len, profile[profile.length-1].h).y);
-    for(const pt of [...profile].reverse()){
-      const p = toE(pt.a, pt.h);
-      ctx.lineTo(p.x, p.y);
-    }
-    ctx.closePath();
-    ctx.stroke();
-  }else{
-    ctx.strokeRect(x0, ceilY, x1-x0, floorY-ceilY);
-  }
+  ctx.strokeRect(x0, ceilY, x1-x0, floorY-ceilY);
 
   // Collect everything that appears on this wall, back to front.
   const items = elevItems(info);
@@ -2732,6 +2682,53 @@ function slopeOnWall(info, s){
   return {aLo, aHi, tLo:tAt(aLo), tHi:tAt(aHi)};
 }
 
+// The boxing itself: a solid wedge hanging under the untouched ceiling. Its top
+// edge is level and its underside slopes, so where the slope runs along this wall
+// it reads as a triangle, and where it runs into the wall you see the flat end of
+// it as a band of constant thickness.
+function drawSlopeBoxing(info){
+  for(const s of slopes){
+    const on = slopeOnWall(info, s);
+    if(!on) continue;
+    const top = Math.max(s.hLo, s.hHi);
+    const hAt = t => s.hLo + t*(s.hHi - s.hLo);
+    const quad = [
+      toE(on.aLo, top), toE(on.aHi, top),
+      toE(on.aHi, hAt(on.tHi)), toE(on.aLo, hAt(on.tLo)),
+    ];
+    const isSel = selectedItem === s;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(quad[0].x, quad[0].y);
+    for(let i=1; i<quad.length; i++) ctx.lineTo(quad[i].x, quad[i].y);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(150,120,200,0.28)';
+    ctx.fill();
+    // Hatch it, so it reads as built rather than as empty space.
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(150,120,200,0.35)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    const lo = Math.min(quad[0].x, quad[3].x), hi = Math.max(quad[1].x, quad[2].x);
+    const yTop = Math.min(...quad.map(q => q.y)), yBot = Math.max(...quad.map(q => q.y));
+    for(let x = lo - (yBot-yTop); x < hi + (yBot-yTop); x += 7){
+      ctx.moveTo(x, yBot); ctx.lineTo(x + (yBot-yTop), yTop);
+    }
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.strokeStyle = isSel ? COL.sel : '#9678C8';
+    ctx.lineWidth = isSel ? 2.2 : 1.4;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(quad[0].x, quad[0].y);
+    for(let i=1; i<quad.length; i++) ctx.lineTo(quad[i].x, quad[i].y);
+    ctx.closePath();
+    ctx.stroke();
+  }
+}
+
 // Clickable ceiling heights in the elevation. Where the slope runs along this
 // wall there are two to set; where it runs into the wall there is only one.
 function drawSlopeElevDims(info){
@@ -2758,7 +2755,7 @@ function flagItemsThroughCeiling(info, items){
   for(const it of items){
     if(it.kind === 'wall') continue;
     const mid = (it.a1 + it.a2)/2;
-    const ceil = Math.min(elevCeilingAt(info, it.a1), elevCeilingAt(info, mid), elevCeilingAt(info, it.a2));
+    const ceil = Math.min(elevClearHeightAt(info, it.a1), elevClearHeightAt(info, mid), elevClearHeightAt(info, it.a2));
     if(it.z2 <= ceil + 0.5) continue;
     const p1 = toE(it.a1, it.z2), p2 = toE(it.a2, it.z1);
     ctx.save();
@@ -2989,9 +2986,11 @@ const ptInSlope = (mx,my,s) => {
   return mx>=bb.x1 && mx<=bb.x2 && my>=bb.y1 && my<=bb.y2;
 };
 
-// Ceiling height at a point. Overlapping zones take the lowest, since the
-// tightest constraint is the one that matters.
-function ceilingAt(x, y){
+// Clear height at a point: the underside of any boxing there, or the ceiling if
+// there is none. The room's ceiling is never altered — a slope is boxing added
+// beneath it. Overlapping zones take the lowest, since the tightest constraint is
+// the one that matters.
+function clearHeightAt(x, y){
   let h = roomCeil;
   for(const s of slopes){
     const bb = slopeBB(s);
@@ -4532,7 +4531,9 @@ function showSelected(){
     const runMm = runIsWidth ? it.width : it.depth;
     info.append(
       heading('Sloped ceiling'),
-      readout('Falls to', fmtD(lowest) + ' at its low end'),
+      el('div', {cls:'hint', text:'Angled boxing under the ceiling. The room\'s '
+        + `${fmtD(roomCeil)} ceiling is unchanged; this hangs below it.`}),
+      readout('Underside at', fmtD(lowest) + ' at its low end'),
       readout('Falls', SLOPE_DIRS[slopeRot(it)] + ' of the plan'),
       btn('↻ Rotate 90°', () => {
         pushHistory();
@@ -4956,9 +4957,9 @@ function refreshSchedule(){
     body.append(el('div', {cls:'divider'}));
     body.append(heading('Sloped ceilings'));
     body.append(table(null, [
-      ['Zones', String(s.slopeCount)],
-      ['Area under a slope', fmtArea(s.slopeAreaMm2)],
-      ['Lowest ceiling', fmtD(s.lowestCeil)],
+      ['Boxed zones', String(s.slopeCount)],
+      ['Area under boxing', fmtArea(s.slopeAreaMm2)],
+      ['Lowest clear height', fmtD(s.lowestCeil)],
       [`Floor under ${fmtD(HEADROOM_MM)}`, fmtArea(s.lowHeadAreaMm2)],
       [`Floor with full headroom`, fmtArea(s.standingAreaMm2)],
     ]));
@@ -5719,8 +5720,8 @@ function schedulePage(){
 
   if(s.slopeCount){
     sectionTitle('Sloped ceilings');
-    row('Zones', String(s.slopeCount));
-    row('Lowest ceiling', fmtD(s.lowestCeil));
+    row('Boxed zones', String(s.slopeCount));
+    row('Lowest clear height', fmtD(s.lowestCeil));
     row(`Floor under ${fmtD(HEADROOM_MM)}`, fmtArea(s.lowHeadAreaMm2));
     row('Floor with full headroom', fmtArea(s.standingAreaMm2), true);
     gap();

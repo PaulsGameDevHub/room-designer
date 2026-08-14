@@ -47,18 +47,23 @@ set in the sidebar.
 **Kitchen units** — base, wall, tall and island, with real carcass and door depths.
 Wall units are drawn dashed to show they are overhead.
 
-**Sloped ceilings** — a rectangular zone where the ceiling ramps between two
-heights, for the soffit over a staircase or a raked loft ceiling. Drag it over the
-stairs and set a height at each edge; everywhere outside the zone stays at the room
-ceiling height, and where zones overlap the lowest wins.
+**Sloped ceilings** — angled boxing hanging under the ceiling: a wedge with a level
+top and a sloping underside. The room's ceiling height is never altered; the boxing
+is added beneath it. Starts as a 1m square patch falling 300mm with its top flush
+to the ceiling, snaps its nearest edge to any wall, and rotates in 90° steps taking
+its footprint with it.
+
+It is described the way it is built: a **drop from the ceiling** for where the top
+sits (0 means flush), and a **fall** for how far it comes down over its length.
 
 What it is really for is headroom. In plan the zone is shaded, darkest at the low
-end, with an arrow up the slope and a dashed line marking where the ceiling passes
-2000mm. In Elevation the ceiling itself becomes a ramp, the wall is clipped beneath
-it, and anything taller than the ceiling above it — a 2100mm tall unit under a
-1400mm soffit — is outlined in red and labelled with how much too tall it is. The
-schedule reports the area under a slope, the lowest ceiling, and how much floor has
-full headroom against how much does not.
+end, with an arrow up the slope and a dashed line where the underside passes 2000mm.
+In Elevation the ceiling stays where it is and the boxing is drawn as a hatched
+wedge below it, with the lowest clear height called out. Anything taller than the
+clear height above it — a 2100mm tall unit under 1400mm of clearance — is outlined
+in red and labelled with the overshoot. Both heights can be set by clicking them in
+Elevation as well as in the sidebar. The schedule reports the area under boxing, the
+lowest clear height, and how much floor keeps full headroom.
 
 **Radiators** — Type 11 single panel, Type 21 single plus, Type 22 double panel and
 towel rails. Panel depth follows the type (60 / 80 / 100mm), which matters in plan
