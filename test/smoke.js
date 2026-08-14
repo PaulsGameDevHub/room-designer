@@ -70,7 +70,7 @@ const IDS = ['canvas','canvas-wrap','status','sidebar','toolbar','dim-editor','d
   'pdf-scale', 'status-msg', 'build', 'btn-wall',
   'btn-electric', 'electric-panel', 'fit-type', 'fit-height', 'fit-size-display',
   'btn-rad', 'rad-panel', 'rad-type', 'rad-len', 'rad-h', 'rad-len-label',
-  'rad-h-label', 'rad-size-display'];
+  'rad-h-label', 'rad-size-display', 'rad-depth', 'rad-floor'];
 for(const id of IDS) byId[id] = mkEl(id === 'canvas' ? 'canvas' : 'div', id);
 byId['room-w'].value = '8220';
 byId['room-h'].value = '5050';
@@ -138,7 +138,7 @@ const exposed = `
   boxNearestObjects, cornerShadow, clipToSlab, cornerOverlapArea,
   slideBoxClear, slidePieceClear, settlePiece, settleBox, clearOfCorners, firstSnap, reSnap,
   isAngled, boxAngle, boxAxes, boxCorners, boxPolygon, hypOf, placeBoxOnHyp,
-  boxHypGaps, boxInsideRoom, polyArea, clipByConvex, refreshElevWalls, rebindCornerSnaps,
+  boxInsideRoom, polyArea, clipByConvex, refreshElevWalls, rebindCornerSnaps,
   spanOf, depthOf, itemAngle, itemAxes, itemCorners, itemPolygon, itemAABB, ptInItem,
   placeOnHyp, itemHypGaps, itemInsideRoom, hypCandidates, unsnapPiece, anchorPiece,
   settleInRun, settleInAngledRun, separateUnits, anchorBox,
@@ -554,8 +554,8 @@ check('gap dimensions along an angled wall reach both ends', () => {
   const px = h.p1.x + 0.5*h.len*h.ux, py = h.p1.y + 0.5*h.len*h.uy;
   ku.cx = px + h.nx*(ku.depth/2); ku.cy = py + h.ny*(ku.depth/2);
   api.snapBox(ku);
-  const g = api.boxHypGaps(ku);
-  if(!g) return fail('boxHypGaps returned nothing');
+  const g = api.itemHypGaps(ku);
+  if(!g) return fail('itemHypGaps returned nothing');
   const total = g.gapLo + ku.width + g.gapHi;
   return Math.abs(total - h.len) < 2
     ? `${g.gapLo} + ${ku.width} + ${g.gapHi} = ${Math.round(total)}mm, wall is ${Math.round(h.len)}mm`
@@ -573,7 +573,7 @@ check('two units on the same angled wall measure the gap between them', () => {
   const px = h.p1.x + t2*h.len*h.ux, py = h.p1.y + t2*h.len*h.uy;
   second.cx = px + h.nx*(second.depth/2); second.cy = py + h.ny*(second.depth/2);
   api.snapBox(second);
-  const g = api.boxHypGaps(second);
+  const g = api.itemHypGaps(second);
   const ok = g && g.gapLo > 0 && g.gapLo < 400;
   const res = g ? `gap to neighbour ${g.gapLo}mm, to the far end ${g.gapHi}mm` : 'none';
   api.selectedItem = second; api.deleteSelected();
@@ -669,10 +669,12 @@ check('clipByConvex intersects two rotated rectangles', () => {
 });
 
 // ── Radiators ────────────────────────────────────────────────────────────────
-function dropRadiator(radType, len, ht, cx, cy){
+function dropRadiator(radType, len, ht, cx, cy, depth, floor){
   document.getElementById('rad-type').value = radType;
   document.getElementById('rad-len').value = String(len);
   document.getElementById('rad-h').value = String(ht);
+  document.getElementById('rad-depth').value = depth === undefined ? '' : String(depth);
+  document.getElementById('rad-floor').value = floor === undefined ? '' : String(floor);
   api.addRadiator();
   const r = api.furniture[api.furniture.length-1];
   r.cx = cx; r.cy = cy;
@@ -701,6 +703,49 @@ check('output rises with type, length and height', () => {
   if(shorter >= base) bad.push(`300mm ${shorter}W not below 600mm ${base}W`);
   return bad.length ? fail(bad.join('; '))
     : `T11 1000x600 ${base}W, T22 ${byType}W, 2m long ${byLen}W, 700h ${byHt}W, 300h ${shorter}W`;
+});
+
+check('the panel defaults to a 1m radiator', () => {
+  emptyRoom();
+  // Nothing typed at all: whatever the panel opens with is what gets added.
+  document.getElementById('rad-type').value = 'type22';
+  document.getElementById('rad-len').value = '';
+  document.getElementById('rad-h').value = '';
+  document.getElementById('rad-depth').value = '';
+  document.getElementById('rad-floor').value = '';
+  api.addRadiator();
+  const r = api.furniture[api.furniture.length-1];
+  const bad = [];
+  if(r.width !== 1000) bad.push(`length ${r.width}, expected 1000`);
+  if(r.height !== 600) bad.push(`height ${r.height}, expected 600`);
+  if(r.mountH !== 150) bad.push(`off floor ${r.mountH}, expected 150`);
+  return bad.length ? fail(bad.join('; '))
+    : `1000 × ${r.height}mm, ${r.depth}mm deep, ${r.mountH}mm off the floor`;
+});
+
+check('every radiator dimension can be any number', () => {
+  emptyRoom();
+  // Deliberately awkward figures, none of them on any old preset list.
+  const r = dropRadiator('type22', 1337, 523, 3000, 200, 47, 92);
+  const bad = [];
+  if(r.width !== 1337) bad.push(`length ${r.width}`);
+  if(r.height !== 523) bad.push(`height ${r.height}`);
+  if(r.depth !== 47) bad.push(`depth ${r.depth}`);
+  if(r.mountH !== 92) bad.push(`off floor ${r.mountH}`);
+  if(bad.length) return fail(bad.join('; '));
+  // And the footprint follows the typed numbers.
+  const bb = api.boxBB(r);
+  if(Math.abs((bb.x2-bb.x1) - 1337) > 0.001) return fail(`footprint spans ${bb.x2-bb.x1}`);
+  if(Math.abs((bb.y2-bb.y1) - 47) > 0.001) return fail(`footprint depth ${bb.y2-bb.y1}`);
+  return `1337 × 523mm, 47mm deep, 92mm off the floor, all as typed`;
+});
+
+check('an odd height still gets an output estimate', () => {
+  const w = api.radOutput('type22', 1337, 523);
+  const at600 = api.radOutput('type22', 1337, 600);
+  return w > 0 && w < at600
+    ? `523mm high gives ${w}W, below the ${at600}W of the same length at 600mm`
+    : fail(`${w}W at 523mm vs ${at600}W at 600mm`);
 });
 
 check('a radiator snaps to a wall 150mm off the floor', () => {

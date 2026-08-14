@@ -198,15 +198,20 @@ table.sched tr.total td{font-weight:600;border-top:1px solid var(--bd);border-bo
       <div id="rad-panel" style="display:none;">
         <h3>Radiators</h3>
         <div class="panel">
-          <div><label for="rad-type">Type</label><select id="rad-type"></select></div>
           <div class="row">
-            <div><label for="rad-len" id="rad-len-label">Length (mm)</label><select id="rad-len"></select></div>
-            <div><label for="rad-h" id="rad-h-label">Height (mm)</label><select id="rad-h"></select></div>
+            <div><label for="rad-len" id="rad-len-label">Length (mm)</label><input id="rad-len" type="text" inputmode="numeric" value="1000"></div>
+            <div><label for="rad-h" id="rad-h-label">Height (mm)</label><input id="rad-h" type="text" inputmode="numeric" value="600"></div>
           </div>
+          <div class="row">
+            <div><label for="rad-depth">Depth (mm)</label><input id="rad-depth" type="text" inputmode="numeric" value="100"></div>
+            <div><label for="rad-floor">Off floor (mm)</label><input id="rad-floor" type="text" inputmode="numeric" value="150"></div>
+          </div>
+          <div><label for="rad-type">Preset (optional)</label><select id="rad-type"></select></div>
           <div class="hint" id="rad-size-display"></div>
           <button class="primary" onclick="addRadiator()">Add radiator</button>
-          <div class="hint">Sits 150mm off the floor and snaps to any wall. Outputs
-            are approximate, at &Delta;T50 — check the maker's figures before ordering.</div>
+          <div class="hint">Any size you like — type over any of the four figures.
+            A preset just fills them in. Every one can be changed again after
+            placing. Output is approximate, at &Delta;T50.</div>
         </div>
       </div>
 
@@ -259,7 +264,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-14 14:46';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-14 14:54';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -363,10 +368,9 @@ const RAD_SPECS = {
   type22: {label:'Type 22 · double panel', depth:100, wPerM600:1800, color:'#5A7E96'},
   towel:  {label:'Towel rail',             depth:100, wPerM600:300,  color:'#4E93A8', towel:true},
 };
-const RAD_LENGTHS = [400, 600, 800, 1000, 1200, 1400, 1600, 1800, 2000];
-const RAD_HEIGHTS = [300, 450, 600, 700];
-const TOWEL_WIDTHS = [400, 500, 600];
-const TOWEL_HEIGHTS = [800, 1000, 1200, 1400, 1600];
+// A radiator can be any size, so these are only what a preset fills in.
+const RAD_DEFAULTS  = {length:1000, height:600, floor:150};
+const TOWEL_DEFAULTS = {length:500, height:1200, floor:150};
 // Output does not scale linearly with height, so scale off the 600mm figure.
 const RAD_HEIGHT_FACTOR = {300:0.55, 450:0.78, 600:1, 700:1.13};
 const RAD_MOUNT_H = 150;   // underside of the panel above the floor, mm
@@ -460,12 +464,6 @@ function ptInDrawnWall(mx, my, w){
   return Math.abs(dx*g.ux + dy*g.uy) <= g.len/2 && Math.abs(dx*g.nx + dy*g.ny) <= g.half;
 }
 function wAng(w){ let a = Math.atan2(w.y2-w.y1, w.x2-w.x1)*180/Math.PI; return a<0 ? a+360 : a; }
-function distPtSeg(p,w){
-  const dx = w.x2-w.x1, dy = w.y2-w.y1, l2 = dx*dx + dy*dy;
-  if(l2 === 0) return Math.hypot(p.x-w.x1, p.y-w.y1);
-  const t = clamp(((p.x-w.x1)*dx + (p.y-w.y1)*dy)/l2, 0, 1);
-  return Math.hypot(p.x-(w.x1+t*dx), p.y-(w.y1+t*dy));
-}
 function status(msg){ $('status-msg').textContent = msg; }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1660,7 +1658,6 @@ function itemHypGaps(it){
           gapLo:Math.max(0, Math.round(lo-nearLo)),
           gapHi:Math.max(0, Math.round(nearHi-hi))};
 }
-function boxHypGaps(b){ return itemHypGaps(b); }
 
 function drawAngledItemDims(it){
   const g = itemHypGaps(it);
@@ -2750,13 +2747,22 @@ const fittingBB = f => aabbOf(fittingCorners(f));
 function addRadiator(){
   const radType = RAD_SPECS[$('rad-type').value] ? $('rad-type').value : 'type22';
   const spec = RAD_SPECS[radType];
-  const a = parseInt($('rad-len').value, 10) || (spec.towel ? 500 : 1000);
-  const b = parseInt($('rad-h').value, 10) || (spec.towel ? 1200 : 600);
+  const d = spec.towel ? TOWEL_DEFAULTS : RAD_DEFAULTS;
+  // Every dimension is whatever was typed; the preset only seeded the boxes.
+  const num = (id, fallback, min) => {
+    const v = parseMM($(id).value);
+    return (isNaN(v) || v < min) ? fallback : v;
+  };
+  const len   = num('rad-len',   d.length, 50);
+  const ht    = num('rad-h',     d.height, 50);
+  const depth = num('rad-depth', spec.depth, 20);
+  const floor = num('rad-floor', d.floor, 0);
+
   const r = {
     type:'furniture', isRad:true, radType, fType:'radiator',
     label:spec.label.split(' · ')[0],
-    width:a, depth:spec.depth, height:b,
-    mountH:RAD_MOUNT_H, overhead:false,
+    width:len, depth, height:ht,
+    mountH:floor, overhead:false,
     color:spec.color, snapToWall:true,
     cx:roomW/2, cy:roomH/2, rot:0, horiz:true,
     snapped:false, snappedFace:null, anchorWallCoord:null, locked:false
@@ -2765,7 +2771,8 @@ function addRadiator(){
   furniture.push(r);
   selectedItem = r;
   setMode('select'); showSelected(); requestDraw();
-  status(`${spec.label} ${a}×${b}mm, about ${radOutput(radType, a, b)}W — drag it to a wall`);
+  status(`${len}×${ht}mm, ${depth}mm deep, ${floor}mm off the floor, `
+    + `about ${radOutput(radType, len, ht)}W — drag it to a wall`);
 }
 
 function addFitting(){
@@ -4296,35 +4303,35 @@ function initDropdowns(){
   showFit();
 
   const rt = $('rad-type'), rl = $('rad-len'), rh = $('rad-h');
+  const rd = $('rad-depth'), rf = $('rad-floor');
   for(const [k, s] of Object.entries(RAD_SPECS)){
     const o = el('option', {value:k, text:s.label});
     if(k === 'type22') o.setAttribute('selected','');
     rt.appendChild(o);
   }
   rt.value = 'type22';
-  const fillRadSizes = () => {
+
+  // Choosing a preset only fills the boxes in; they stay freely editable.
+  const applyPreset = () => {
     const spec = RAD_SPECS[rt.value] || RAD_SPECS.type22;
-    const lens = spec.towel ? TOWEL_WIDTHS : RAD_LENGTHS;
-    const hts  = spec.towel ? TOWEL_HEIGHTS : RAD_HEIGHTS;
+    const d = spec.towel ? TOWEL_DEFAULTS : RAD_DEFAULTS;
     $('rad-len-label').textContent = spec.towel ? 'Width (mm)' : 'Length (mm)';
-    rl.textContent = '';
-    for(const v of lens) rl.appendChild(el('option', {value:v, text:v+'mm'}));
-    rl.value = String(spec.towel ? 500 : 1000);
-    rh.textContent = '';
-    for(const v of hts) rh.appendChild(el('option', {value:v, text:v+'mm'}));
-    rh.value = String(spec.towel ? 1200 : 600);
+    rl.value = String(d.length);
+    rh.value = String(d.height);
+    rd.value = String(spec.depth);
+    rf.value = String(d.floor);
     showRadSize();
   };
   const showRadSize = () => {
-    const spec = RAD_SPECS[rt.value] || RAD_SPECS.type22;
-    const a = parseInt(rl.value,10) || 1000, b = parseInt(rh.value,10) || 600;
+    const n = (inp, fb) => { const v = parseMM(inp.value); return isNaN(v) ? fb : v; };
+    const a = n(rl, RAD_DEFAULTS.length), b = n(rh, RAD_DEFAULTS.height);
+    const dep = n(rd, 100), fl = n(rf, RAD_MOUNT_H);
     $('rad-size-display').textContent =
-      `${a} × ${b}mm, ${spec.depth}mm deep · about ${radOutput(rt.value, a, b)}W`;
+      `${a} × ${b}mm, ${dep}mm deep, ${fl}mm off the floor · about ${radOutput(rt.value, a, b)}W`;
   };
-  rt.addEventListener('change', fillRadSizes);
-  rl.addEventListener('change', showRadSize);
-  rh.addEventListener('change', showRadSize);
-  fillRadSizes();
+  rt.addEventListener('change', applyPreset);
+  for(const inp of [rl, rh, rd, rf]) inp.addEventListener('input', showRadSize);
+  applyPreset();
 }
 // ═══════════════════════════════════════════════════════════════════════════
 //  Schedule and costs
