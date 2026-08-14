@@ -131,7 +131,8 @@ const exposed = `
   get dimHitAreas(){return dimHitAreas}, openDim, confirmDim, hitTest,
   get slopes(){return slopes}, addSlope, slopeBB, ptInSlope, ceilingAt,
   slopeCrossing, elevCeilingAt, elevHasSlope, HEADROOM_MM, SLOPE_DEFAULTS,
-  slopeOnWall, drawSlopeElevDims,
+  slopeOnWall, drawSlopeElevDims, slopeRot, slopeDrop, slopeFall,
+  setSlope, rotateSlope, snapSlope, SLOPE_DIRS,
   get past(){return past}, get future(){return future},
   set selectedItem(v){selectedItem=v}, get selectedItem(){return selectedItem},
   addWallPiece, addCorner, addKitchenUnit, addFurniture, addDoor, addWindow,
@@ -672,19 +673,96 @@ check('clipByConvex intersects two rotated rectangles', () => {
 });
 
 // ── Sloped ceilings ──────────────────────────────────────────────────────────
-check('one click adds a sloped ceiling zone', () => {
+check('one click adds a 1m square slope falling 300mm from the ceiling', () => {
   emptyRoom();
   api.addSlope();
   const z = api.slopes[0];
   if(!z) return fail('nothing added');
   const bad = [];
-  if(z.width !== 1000) bad.push(`width ${z.width}`);
-  if(z.depth !== 2400) bad.push(`depth ${z.depth}`);
-  if(z.hHi !== api.roomCeil) bad.push(`high end ${z.hHi}, expected the ceiling ${api.roomCeil}`);
-  if(z.hLo >= z.hHi) bad.push(`low end ${z.hLo} is not below the high end`);
+  if(z.width !== 1000) bad.push(`width ${z.width}, expected 1000`);
+  if(z.depth !== 1000) bad.push(`length ${z.depth}, expected 1000`);
+  if(api.slopeDrop(z) !== 0) bad.push(`drop from ceiling ${api.slopeDrop(z)}, expected 0`);
+  if(api.slopeFall(z) !== 300) bad.push(`fall ${api.slopeFall(z)}, expected 300`);
+  if(Math.max(z.hLo, z.hHi) !== api.roomCeil) bad.push(`top ${Math.max(z.hLo,z.hHi)} is not the ceiling`);
   if(api.selectedItem !== z) bad.push('not left selected');
   return bad.length ? fail(bad.join('; '))
-    : `${z.width}×${z.depth}mm, ${z.hLo}mm rising to ${z.hHi}mm, selected`;
+    : `1m × 1m, top flush with the ${api.roomCeil}mm ceiling, falling ${api.slopeFall(z)}mm `
+      + `${api.SLOPE_DIRS[api.slopeRot(z)]}`;
+});
+
+check('rotating the slope turns both the fall and the footprint', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  z.width = 1200; z.depth = 600;
+  const seen = [];
+  for(let i=0; i<4; i++){
+    seen.push(`${api.slopeRot(z)}:${z.width}x${z.depth}`);
+    api.rotateSlope(z);
+  }
+  const rots = seen.map(s => s.split(':')[0]);
+  if(new Set(rots).size !== 4) return fail(`only ${new Set(rots).size} directions in ${seen.join(' ')}`);
+  // Four quarter turns must come back to the start.
+  if(z.width !== 1200 || z.depth !== 600) return fail(`footprint ended ${z.width}x${z.depth}`);
+  if(api.slopeFall(z) !== 300 || api.slopeDrop(z) !== 0)
+    return fail(`drop/fall drifted to ${api.slopeDrop(z)}/${api.slopeFall(z)}`);
+  return `${seen.join('  ')} — back to where it started`;
+});
+
+check('drop and fall can be set independently', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  api.setSlope(z, api.slopeRot(z), 400, 800);     // starts 400 down, falls 800
+  const top = Math.max(z.hLo, z.hHi), bot = Math.min(z.hLo, z.hHi);
+  const bad = [];
+  if(top !== api.roomCeil - 400) bad.push(`top ${top}, expected ${api.roomCeil-400}`);
+  if(bot !== api.roomCeil - 1200) bad.push(`bottom ${bot}, expected ${api.roomCeil-1200}`);
+  if(api.slopeDrop(z) !== 400) bad.push(`drop reads back as ${api.slopeDrop(z)}`);
+  if(api.slopeFall(z) !== 800) bad.push(`fall reads back as ${api.slopeFall(z)}`);
+  return bad.length ? fail(bad.join('; '))
+    : `top ${top}mm, bottom ${bot}mm, reading back as a ${api.slopeDrop(z)}mm drop and ${api.slopeFall(z)}mm fall`;
+});
+
+check('a slope snaps its nearest edge to a wall', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  // Dropped near the top-left corner, 60mm off each wall.
+  z.cx = 560; z.cy = 560;
+  api.snapSlope(z);
+  const bb = api.slopeBB(z);
+  if(!z.snapped) return fail('did not report snapping');
+  if(Math.abs(bb.x1) > 0.001) return fail(`left edge at x=${bb.x1}, expected 0`);
+  if(Math.abs(bb.y1) > 0.001) return fail(`top edge at y=${bb.y1}, expected 0`);
+  return `clicked into the corner, edges at x=${bb.x1} and y=${bb.y1}`;
+});
+
+check('a slope well clear of any wall is left alone', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  z.cx = 4000; z.cy = 2500;
+  api.snapSlope(z);
+  return (!z.snapped && z.cx === 4000 && z.cy === 2500)
+    ? 'stayed at 4000, 2500'
+    : fail(`moved to ${z.cx}, ${z.cy} (snapped=${z.snapped})`);
+});
+
+check('a slope snaps to an internal wall piece face', () => {
+  emptyRoom({
+    wallPieces:[{cx:4000, cy:1000, len:2000, thick:200, horiz:false,
+                 snapped:true, snappedFace:'top', anchorWallCoord:0, orientationLocked:true}]
+  });
+  api.addSlope();
+  const z = api.slopes[0];
+  // The stub's underside is at y=2000; drop the zone just below it.
+  z.cx = 4000; z.cy = 2560;
+  api.snapSlope(z);
+  const bb = api.slopeBB(z);
+  return Math.abs(bb.y1 - 2000) < 0.001
+    ? `top edge clicked onto the stub's face at y=${bb.y1}`
+    : fail(`top edge at y=${bb.y1}, expected 2000`);
 });
 
 check('the ceiling ramps across the zone and is flat outside it', () => {
@@ -819,13 +897,22 @@ check('a slope zone can be selected, dimensioned, saved and deleted', () => {
     : fail(`${api.slopes.length} left after delete`);
 });
 
-check('the top of the slope defaults flush with the ceiling', () => {
+check('the top stays flush with the ceiling whichever way it faces', () => {
   emptyRoom();
   api.addSlope();
   const z = api.slopes[0];
-  return z.hHi === api.roomCeil
-    ? `high end at ${z.hHi}mm, a 0mm drop from the ${api.roomCeil}mm ceiling`
-    : fail(`high end ${z.hHi}, expected the ceiling at ${api.roomCeil}`);
+  // Which of hLo/hHi holds the ceiling-level end depends on the direction, so
+  // the drop is the figure that has to stay at zero through a full turn.
+  const drops = [];
+  for(let i=0; i<4; i++){
+    drops.push(api.slopeDrop(z));
+    if(Math.max(z.hLo, z.hHi) !== api.roomCeil)
+      return fail(`facing ${api.slopeRot(z)}: top is ${Math.max(z.hLo,z.hHi)}, not ${api.roomCeil}`);
+    api.rotateSlope(z);
+  }
+  return drops.every(d => d === 0)
+    ? `0mm drop in all four directions, top always at the ${api.roomCeil}mm ceiling`
+    : fail(`drops were ${drops.join(', ')}`);
 });
 
 check('a slope running along a wall offers two editable heights in elevation', () => {

@@ -245,7 +245,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-14 20:49';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-14 21:01';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -342,7 +342,9 @@ const PLATE_D = 30;      // how far a fitting is drawn off the wall in plan, mm
 // A sloped ceiling zone: a rectangle over part of the plan where the ceiling ramps
 // linearly from one edge to the other. hLo is the height at the low-coordinate
 // edge, hHi at the far edge, so swapping them reverses the slope.
-const SLOPE_DEFAULTS = {width:1000, depth:2400, hLo:1200, axis:'y'};
+// Starts as a 1m square patch falling 300mm, with its top flush to the ceiling.
+const SLOPE_DEFAULTS = {width:1000, depth:1000, fall:300, axis:'y'};
+const SLOPE_SNAP_MM = 300;  // how close an edge must be to click onto a wall
 const HEADROOM_MM = 2000;   // where to mark the usable headroom line
 
 // Radiators. Panel depth follows the type — a double panel stands noticeably
@@ -3008,21 +3010,72 @@ function slopeCrossing(s, height){
   return (t > 0.001 && t < 0.999) ? t : null;
 }
 
+// Which way the ceiling falls, derived rather than stored: 0 toward the bottom of
+// the plan, 1 toward the right, 2 toward the top, 3 toward the left.
+function slopeRot(s){
+  const fallsToHigherCoord = s.hLo > s.hHi;
+  if(s.axis === 'y') return fallsToHigherCoord ? 0 : 2;
+  return fallsToHigherCoord ? 1 : 3;
+}
+const SLOPE_DIRS = ['toward the bottom', 'toward the right', 'toward the top', 'toward the left'];
+// Top of the slope as a drop below the ceiling, and its total fall.
+const slopeDrop = s => Math.round(roomCeil - Math.max(s.hLo, s.hHi));
+const slopeFall = s => Math.round(Math.abs(s.hHi - s.hLo));
+
+// Rebuild hLo and hHi from a direction, a drop and a fall.
+function setSlope(s, rot, drop, fall){
+  rot = ((rot % 4) + 4) % 4;
+  const top = roomCeil - Math.max(0, drop);
+  const bot = top - Math.max(0, fall);
+  s.axis = rot % 2 === 0 ? 'y' : 'x';
+  if(rot === 0 || rot === 1){ s.hLo = top; s.hHi = bot; }
+  else                      { s.hLo = bot; s.hHi = top; }
+}
+// A quarter turn also turns the footprint.
+function rotateSlope(s){
+  const next = slopeRot(s) + 1;
+  const w = s.width; s.width = s.depth; s.depth = w;
+  setSlope(s, next, slopeDrop(s), slopeFall(s));
+}
+
+// Click the zone's nearest edge onto a wall, independently in each axis.
+function snapSlope(s){
+  const bb = slopeBB(s);
+  let shiftX = null, dx = SLOPE_SNAP_MM;
+  let shiftY = null, dy = SLOPE_SNAP_MM;
+  for(const e of allSnapEdges(-1)){
+    if(e.type === 'v'){
+      for(const edge of [bb.x1, bb.x2]){
+        const d = Math.abs(edge - e.coord);
+        if(d < dx){ dx = d; shiftX = e.coord - edge; }
+      }
+    }else{
+      for(const edge of [bb.y1, bb.y2]){
+        const d = Math.abs(edge - e.coord);
+        if(d < dy){ dy = d; shiftY = e.coord - edge; }
+      }
+    }
+  }
+  if(shiftX !== null) s.cx += shiftX;
+  if(shiftY !== null) s.cy += shiftY;
+  s.snapped = shiftX !== null || shiftY !== null;
+}
+
 function addSlope(){
   const s = {
     type:'slope',
     cx:roomW/2, cy:roomH/2,
     width:SLOPE_DEFAULTS.width, depth:SLOPE_DEFAULTS.depth,
     axis:SLOPE_DEFAULTS.axis,
-    hLo:SLOPE_DEFAULTS.hLo, hHi:roomCeil,
+    hLo:roomCeil, hHi:roomCeil - SLOPE_DEFAULTS.fall,
     locked:false
   };
   pushHistory();
   slopes.push(s);
   selectedItem = s;
   setMode('select'); showSelected(); requestDraw();
-  status(`Sloped ceiling ${s.width}×${s.depth}mm, ${fmtD(s.hLo)} rising to the ceiling `
-    + `— drag it into place, then set the heights in the sidebar or in Elevation`);
+  status(`Sloped ceiling ${s.width}×${s.depth}mm falling ${SLOPE_DEFAULTS.fall}mm from the ceiling `
+    + `— drag it to a wall, Rotate to turn the slope, heights in the sidebar or Elevation`);
 }
 
 function drawSlopes(){
@@ -3681,8 +3734,8 @@ function applySnapshot(s){
     z.width ??= SLOPE_DEFAULTS.width;
     z.depth ??= SLOPE_DEFAULTS.depth;
     z.axis ??= SLOPE_DEFAULTS.axis;
-    z.hLo ??= SLOPE_DEFAULTS.hLo;
-    z.hHi ??= roomCeil;
+    z.hLo ??= roomCeil;
+    z.hHi ??= roomCeil - SLOPE_DEFAULTS.fall;
     z.cx ??= roomW/2;
     z.cy ??= roomH/2;
   }
@@ -4049,7 +4102,10 @@ canvas.addEventListener('pointermove', e => {
       status(d.snapped ? 'Release to place' : 'Drag to a wall to snap');
     }else if(slopes.includes(d)){
       d.cx = sg(raw.x-dragOffX); d.cy = sg(raw.y-dragOffY);
-      status(`Sloped ceiling — ${fmtD(d.hLo)} rising to ${fmtD(d.hHi)}`);
+      snapSlope(d);
+      status(d.snapped
+        ? `Snapped to a wall — falls ${slopeFall(d)}mm ${SLOPE_DIRS[slopeRot(d)]}`
+        : `Falls ${slopeFall(d)}mm ${SLOPE_DIRS[slopeRot(d)]}`);
     }else if(fittings.includes(d)){
       d.cx = clamp(raw.x-dragOffX, 0, roomW);
       d.cy = clamp(raw.y-dragOffY, 0, roomH);
@@ -4113,6 +4169,8 @@ function endPointer(e){
     }
   }else if(fittings.includes(d)){
     if(!d.snapped) snapToSurface(d);
+  }else if(slopes.includes(d)){
+    snapSlope(d);
   }else if(corners.includes(d)){
     autoSnapCorner(d);
   }
@@ -4475,20 +4533,22 @@ function showSelected(){
     info.append(
       heading('Sloped ceiling'),
       readout('Falls to', fmtD(lowest) + ' at its low end'),
-      selField('Slopes along', [['y','Up the plan (Y)'],['x','Across the plan (X)']], it.axis, v => {
-        it.axis = v;
-      }),
-      // The top of the slope is quoted as a drop from the ceiling, so 0 means it
-      // starts flush with it.
-      numField('Drop from ceiling (mm)', Math.round(roomCeil - it.hHi), v => {
-        it.hHi = roomCeil - Math.max(0, v);
-      }),
-      numField('Height above floor at the low end (mm)', it.hLo, v => { it.hLo = Math.max(0, v); }),
-      btn('Reverse the slope', () => {
+      readout('Falls', SLOPE_DIRS[slopeRot(it)] + ' of the plan'),
+      btn('↻ Rotate 90°', () => {
         pushHistory();
-        const t = it.hLo; it.hLo = it.hHi; it.hHi = t;
+        rotateSlope(it);
+        snapSlope(it);
         showSelected(); requestDraw();
       }),
+      // The top is quoted as a drop below the ceiling, so 0 means flush with it;
+      // the fall is how far it comes down over its length.
+      numField('Drop from ceiling (mm)', slopeDrop(it), v => {
+        setSlope(it, slopeRot(it), v, slopeFall(it));
+      }),
+      numField('Fall over the slope (mm)', slopeFall(it), v => {
+        setSlope(it, slopeRot(it), slopeDrop(it), v);
+      }),
+      readout('Low end sits at', fmtD(Math.min(it.hLo, it.hHi)) + ' above the floor'),
       numField(runIsWidth ? 'Length along the slope (mm)' : 'Width across (mm)',
         it.width, v => { it.width = Math.max(100, v); }, {min:100}),
       numField(runIsWidth ? 'Width across (mm)' : 'Length along the slope (mm)',
