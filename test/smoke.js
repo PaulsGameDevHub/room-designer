@@ -131,6 +131,7 @@ const exposed = `
   get dimHitAreas(){return dimHitAreas}, openDim, confirmDim, hitTest,
   get slopes(){return slopes}, addSlope, slopeBB, ptInSlope, ceilingAt,
   slopeCrossing, elevCeilingAt, elevHasSlope, HEADROOM_MM, SLOPE_DEFAULTS,
+  slopeOnWall, drawSlopeElevDims,
   get past(){return past}, get future(){return future},
   set selectedItem(v){selectedItem=v}, get selectedItem(){return selectedItem},
   addWallPiece, addCorner, addKitchenUnit, addFurniture, addDoor, addWindow,
@@ -816,6 +817,121 @@ check('a slope zone can be selected, dimensioned, saved and deleted', () => {
   return api.slopes.length === 0
     ? `2 dimensions, retyped to ${after.width}mm, survived reload, drawn in the PDF, deleted`
     : fail(`${api.slopes.length} left after delete`);
+});
+
+check('the top of the slope defaults flush with the ceiling', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  return z.hHi === api.roomCeil
+    ? `high end at ${z.hHi}mm, a 0mm drop from the ${api.roomCeil}mm ceiling`
+    : fail(`high end ${z.hHi}, expected the ceiling at ${api.roomCeil}`);
+});
+
+check('a slope running along a wall offers two editable heights in elevation', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  z.cx = 2000; z.cy = 400; z.width = 3000; z.depth = 800;
+  z.axis = 'x'; z.hLo = 1200; z.hHi = 2400;      // ramps along the top wall
+  document.getElementById('elev-wall').value = 'top';
+  api.selectedItem = z;
+  api.setView('elev');
+  api.draw();
+  const dims = api.dimHitAreas.filter(h => h.tag && h.tag.type === 'slope-height');
+  api.setView('plan');
+  if(dims.length !== 2) return fail(`${dims.length} height dimensions, expected 2`);
+  const ts = dims.map(d => d.tag.t).sort((a,b) => a-b);
+  return ts[0] < 0.2 && ts[1] > 0.8
+    ? `two heights offered, at t=${ts[0].toFixed(2)} and t=${ts[1].toFixed(2)}`
+    : fail(`t values ${ts.map(t => t.toFixed(2)).join(', ')} are not at the two ends`);
+});
+
+check('a slope running into a wall offers just one height there', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  // Must actually reach the top wall: y from 0 to 2400.
+  z.cx = 2000; z.cy = 1200; z.width = 1000; z.depth = 2400;
+  z.axis = 'y'; z.hLo = 1200; z.hHi = 2400;      // ramps away from the top wall
+  document.getElementById('elev-wall').value = 'top';
+  api.selectedItem = z;
+  api.setView('elev');
+  api.draw();
+  const dims = api.dimHitAreas.filter(h => h.tag && h.tag.type === 'slope-height');
+  api.setView('plan');
+  return dims.length === 1
+    ? 'one height offered, since the ceiling is a single height at that wall'
+    : fail(`${dims.length} height dimensions, expected 1`);
+});
+
+check('typing a height in elevation sets it exactly', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  z.cx = 2000; z.cy = 400; z.width = 3000; z.depth = 800;
+  z.axis = 'x'; z.hLo = 1200; z.hHi = 2400;
+  document.getElementById('elev-wall').value = 'top';
+  api.selectedItem = z;
+  api.setView('elev');
+  api.draw();
+  const dims = api.dimHitAreas.filter(h => h.tag && h.tag.type === 'slope-height')
+    .sort((a,b) => a.tag.t - b.tag.t);
+  if(dims.length !== 2){ api.setView('plan'); return fail(`${dims.length} dimensions`); }
+
+  // Type 900 at the low-end dimension. The promise is that the ceiling becomes
+  // 900 AT THAT POINT — not that hLo becomes 900, since the dimension sits a
+  // little way along the run.
+  const tLow = dims[0].tag.t;
+  api.openDim(dims[0].tag, dims[0].bx, dims[0].by);
+  document.getElementById('dim-inp').value = '900';
+  api.confirmDim();
+  const atLow = z.hLo + tLow*(z.hHi - z.hLo);
+  if(Math.abs(atLow - 900) > 1){
+    api.setView('plan');
+    return fail(`height at t=${tLow.toFixed(3)} is ${atLow.toFixed(1)}, expected 900`);
+  }
+
+  // And 2200 at the high-end dimension.
+  api.draw();
+  const hi = api.dimHitAreas.filter(h => h.tag && h.tag.type === 'slope-height')
+    .sort((a,b) => b.tag.t - a.tag.t)[0];
+  const tHigh = hi.tag.t;
+  api.openDim(hi.tag, hi.bx, hi.by);
+  document.getElementById('dim-inp').value = '2200';
+  api.confirmDim();
+  const atHigh = z.hLo + tHigh*(z.hHi - z.hLo);
+  api.setView('plan');
+  return Math.abs(atHigh - 2200) < 1
+    ? `clicked heights came out at exactly ${Math.round(atLow)}mm and ${Math.round(atHigh)}mm`
+    : fail(`height at t=${tHigh.toFixed(3)} is ${atHigh.toFixed(1)}, expected 2200`);
+});
+
+check('a height typed mid-run solves back to the right end', () => {
+  emptyRoom();
+  api.addSlope();
+  const z = api.slopes[0];
+  // The top wall cuts the zone halfway along its run, so t there is 0.5.
+  z.cx = 2000; z.cy = 0; z.width = 1000; z.depth = 2000;
+  z.axis = 'y'; z.hLo = 1000; z.hHi = 2000;
+  document.getElementById('elev-wall').value = 'top';
+  const info = api.elevInfo();
+  const on = api.slopeOnWall(info, z);
+  if(!on) { return fail('the zone was not found on the top wall'); }
+  const t = on.tLo;
+  const before = z.hLo + t*(z.hHi - z.hLo);
+  api.selectedItem = z;
+  api.setView('elev');
+  api.draw();
+  const dim = api.dimHitAreas.find(h => h.tag && h.tag.type === 'slope-height');
+  api.openDim(dim.tag, dim.bx, dim.by);
+  document.getElementById('dim-inp').value = '1800';
+  api.confirmDim();
+  const after = z.hLo + t*(z.hHi - z.hLo);
+  api.setView('plan');
+  return Math.abs(after - 1800) < 1
+    ? `at t=${t.toFixed(2)} the height went ${Math.round(before)} → ${Math.round(after)}mm as typed`
+    : fail(`height came out ${after.toFixed(1)}, expected 1800`);
 });
 
 check('a tall unit under the low end is flagged in elevation', () => {

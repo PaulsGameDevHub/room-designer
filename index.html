@@ -245,7 +245,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-14 20:39';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-14 20:49';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -1763,8 +1763,14 @@ function openDim(tag, cx, cy){
     lbl.textContent = tag.box.isRad ? 'Radiator length' : 'Width along the wall';
     inp.value = fmtE(tag.box.width);
   }else if(tag.type === 'slope-dim'){
-    lbl.textContent = tag.which === 'width' ? 'Zone width' : 'Zone depth';
+    const runIsWidth = tag.slope.axis === 'x';
+    lbl.textContent = (tag.which === 'width') === runIsWidth
+      ? 'Length along the slope' : 'Width across';
     inp.value = fmtE(tag.slope[tag.which]);
+  }else if(tag.type === 'slope-height'){
+    const s = tag.slope;
+    lbl.textContent = 'Ceiling height here';
+    inp.value = fmtE(s.hLo + tag.t*(s.hHi - s.hLo));
   }
 
   const el = $('dim-editor');
@@ -1830,6 +1836,15 @@ function confirmDim(){
     settleBox(tag.box);
   }else if(tag.type === 'slope-dim'){
     tag.slope[tag.which] = Math.max(100, val);
+  }else if(tag.type === 'slope-height'){
+    // Solve for whichever end of the run this point is closer to, so the height
+    // typed here comes out exactly right.
+    const s = tag.slope, t = tag.t, target = Math.max(0, val);
+    if(t >= 0.5){
+      if(t > 0.001) s.hHi = (target - (1-t)*s.hLo)/t;
+    }else{
+      if(t < 0.999) s.hLo = (target - t*s.hHi)/(1-t);
+    }
   }else if(tag.type === 'hyp-gap'){
     const it = tag.item, g = itemHypGaps(it);
     if(g){
@@ -2442,7 +2457,10 @@ function drawElevation(){
   const items = elevItems(info);
   for(const it of items) drawElevItem(it, info);
   // Anything poking through a sloped ceiling is worth calling out.
-  if(sloped) flagItemsThroughCeiling(info, items);
+  if(sloped){
+    flagItemsThroughCeiling(info, items);
+    drawSlopeElevDims(info);
+  }
 
   // Ceiling height dimension on the left, wall length along the bottom
   const col = COL.dim;
@@ -2465,7 +2483,9 @@ function drawElevation(){
   ctx.font = '10px var(--font)';
   ctx.fillStyle = '#666677';
   if(!items.length) ctx.fillText('Nothing is placed against this wall yet.', x0, ceilY-slab-10);
-  else ctx.fillText(`${items.length} item${items.length===1?'':'s'} on this wall · elevation is a read-only view`, x0, ceilY-slab-10);
+  else ctx.fillText(`${items.length} item${items.length===1?'':'s'} on this wall`
+    + (sloped ? ' · click a ceiling height to change it' : ' · items are placed in Plan'),
+    x0, ceilY-slab-10);
 }
 
 // Everything against the chosen wall, as {a1,a2,z1,z2,...} in viewer coords.
@@ -2684,6 +2704,49 @@ function drawElevItem(it, info){
     ctx.font = '9px var(--font)';
     ctx.fillStyle = COL.dim; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillText('at ' + fmtD(it.z1), x+w+5, y+h);
+  }
+}
+
+// Where a slope zone shows up on the wall being viewed, and how far along its own
+// run each end of that stretch sits. Found by sampling, so it works for angled
+// walls as well as the four room walls.
+function slopeOnWall(info, s){
+  const bb = slopeBB(s), N = 200;
+  let aLo = null, aHi = null;
+  for(let i=0; i<=N; i++){
+    const a = info.len*i/N;
+    const p = elevPlanPointAt(info, a);
+    if(p.x < bb.x1 || p.x > bb.x2 || p.y < bb.y1 || p.y > bb.y2) continue;
+    if(aLo === null) aLo = a;
+    aHi = a;
+  }
+  if(aLo === null) return null;
+  const span = s.axis === 'x' ? bb.x2-bb.x1 : bb.y2-bb.y1;
+  const tAt = a => {
+    if(span <= 0) return 0;
+    const p = elevPlanPointAt(info, a);
+    return clamp(((s.axis === 'x' ? p.x-bb.x1 : p.y-bb.y1))/span, 0, 1);
+  };
+  return {aLo, aHi, tLo:tAt(aLo), tHi:tAt(aHi)};
+}
+
+// Clickable ceiling heights in the elevation. Where the slope runs along this
+// wall there are two to set; where it runs into the wall there is only one.
+function drawSlopeElevDims(info){
+  for(const s of slopes){
+    const on = slopeOnWall(info, s);
+    if(!on) continue;
+    const run = on.aHi - on.aLo;
+    const sameEnd = Math.abs(on.tLo - on.tHi) < 0.01;
+    const pts = sameEnd
+      ? [{a:(on.aLo+on.aHi)/2, t:on.tLo}]
+      : [{a:on.aLo + run*0.08, t:on.tLo}, {a:on.aHi - run*0.08, t:on.tHi}];
+    for(const pt of pts){
+      const h = s.hLo + pt.t*(s.hHi - s.hLo);
+      const top = toE(pt.a, h), bot = toE(pt.a, 0);
+      drawDimLine(bot.x, bot.y, top.x, top.y, fmtD(h), -1,
+        {type:'slope-height', slope:s, t:pt.t}, selectedItem === s);
+    }
   }
 }
 
@@ -2958,8 +3021,8 @@ function addSlope(){
   slopes.push(s);
   selectedItem = s;
   setMode('select'); showSelected(); requestDraw();
-  status(`Sloped ceiling ${s.width}×${s.depth}mm, ${fmtD(s.hLo)} rising to ${fmtD(s.hHi)} `
-    + `— drag it over the stairs, then set the heights in the sidebar`);
+  status(`Sloped ceiling ${s.width}×${s.depth}mm, ${fmtD(s.hLo)} rising to the ceiling `
+    + `— drag it into place, then set the heights in the sidebar or in Elevation`);
 }
 
 function drawSlopes(){
@@ -4404,34 +4467,43 @@ function showSelected(){
     }
     info.append(lockBtn(it), delBtn());
   }else if(slopes.includes(it)){
-    const lowest = Math.min(it.hLo, it.hHi), highest = Math.max(it.hLo, it.hHi);
+    const lowest = Math.min(it.hLo, it.hHi);
     const cross = slopeCrossing(it, HEADROOM_MM);
-    const runMm = it.axis === 'x' ? it.width : it.depth;
+    // Whichever dimension the ceiling ramps along is the run; the other is width.
+    const runIsWidth = it.axis === 'x';
+    const runMm = runIsWidth ? it.width : it.depth;
     info.append(
       heading('Sloped ceiling'),
       readout('Falls to', fmtD(lowest) + ' at its low end'),
       selField('Slopes along', [['y','Up the plan (Y)'],['x','Across the plan (X)']], it.axis, v => {
         it.axis = v;
       }),
-      numField('Height at low edge (mm)', it.hLo, v => { it.hLo = Math.max(0, v); }),
-      numField('Height at high edge (mm)', it.hHi, v => { it.hHi = Math.max(0, v); }),
+      // The top of the slope is quoted as a drop from the ceiling, so 0 means it
+      // starts flush with it.
+      numField('Drop from ceiling (mm)', Math.round(roomCeil - it.hHi), v => {
+        it.hHi = roomCeil - Math.max(0, v);
+      }),
+      numField('Height above floor at the low end (mm)', it.hLo, v => { it.hLo = Math.max(0, v); }),
       btn('Reverse the slope', () => {
         pushHistory();
         const t = it.hLo; it.hLo = it.hHi; it.hHi = t;
         showSelected(); requestDraw();
       }),
-      numField('Width (mm)', it.width, v => { it.width = Math.max(100, v); }, {min:100}),
-      numField('Depth (mm)', it.depth, v => { it.depth = Math.max(100, v); }, {min:100}),
+      numField(runIsWidth ? 'Length along the slope (mm)' : 'Width across (mm)',
+        it.width, v => { it.width = Math.max(100, v); }, {min:100}),
+      numField(runIsWidth ? 'Width across (mm)' : 'Length along the slope (mm)',
+        it.depth, v => { it.depth = Math.max(100, v); }, {min:100}),
       el('div', {cls:'hint', text:
-        (highest > roomCeil
-          ? `The high end is above the ${fmtD(roomCeil)} ceiling, so it has no effect there. `
+        (it.hHi > roomCeil
+          ? `The top is above the ${fmtD(roomCeil)} ceiling, so it has no effect there. `
           : '')
         + (cross !== null
           ? `Headroom drops below ${fmtD(HEADROOM_MM)} over the last `
-            + `${fmtD(Math.round(runMm*(it.hHi > it.hLo ? cross : 1-cross)))} of the run.`
+            + `${fmtD(Math.round(runMm*(it.hHi > it.hLo ? cross : 1-cross)))} of the run. `
           : lowest >= HEADROOM_MM
-            ? `Stays above ${fmtD(HEADROOM_MM)} throughout.`
-            : `Below ${fmtD(HEADROOM_MM)} across the whole zone.`)}),
+            ? `Stays above ${fmtD(HEADROOM_MM)} throughout. `
+            : `Below ${fmtD(HEADROOM_MM)} across the whole zone. `)
+        + 'The heights can also be set by clicking them in Elevation.'}),
       lockBtn(it), delBtn()
     );
   }else if(fittings.includes(it)){
