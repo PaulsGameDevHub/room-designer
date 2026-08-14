@@ -69,8 +69,7 @@ const IDS = ['canvas','canvas-wrap','status','sidebar','toolbar','dim-editor','d
   'btn-furniture','btn-schedule','btn-undo','btn-redo','btn-plan','btn-elev','elev-wall','load-input',
   'pdf-scale', 'status-msg', 'build', 'btn-wall',
   'btn-electric', 'electric-panel', 'fit-type', 'fit-height', 'fit-size-display',
-  'btn-rad', 'rad-panel', 'rad-type', 'rad-len', 'rad-h', 'rad-len-label',
-  'rad-h-label', 'rad-size-display', 'rad-depth', 'rad-floor'];
+  ];
 for(const id of IDS) byId[id] = mkEl(id === 'canvas' ? 'canvas' : 'div', id);
 byId['room-w'].value = '8220';
 byId['room-h'].value = '5050';
@@ -128,7 +127,8 @@ const exposed = `
   dwGeom, dwCorners, ptInDrawnWall, pickAt,
   get fittings(){return fittings}, addFitting, snapToSurface, fittingCorners,
   ptInFitting, fittingBB, drawFittings, FITTING_SPECS, pointInPoly,
-  addRadiator, radOutput, RAD_SPECS, RAD_MOUNT_H,
+  addRadiator, radOutput, RAD_SPECS, RAD_MOUNT_H, RAD_DEFAULTS,
+  get dimHitAreas(){return dimHitAreas}, openDim, confirmDim, hitTest,
   get past(){return past}, get future(){return future},
   set selectedItem(v){selectedItem=v}, get selectedItem(){return selectedItem},
   addWallPiece, addCorner, addKitchenUnit, addFurniture, addDoor, addWindow,
@@ -669,14 +669,16 @@ check('clipByConvex intersects two rotated rectangles', () => {
 });
 
 // ── Radiators ────────────────────────────────────────────────────────────────
+// One button, no options: add the default radiator, then set it up like a user
+// would — by editing it.
 function dropRadiator(radType, len, ht, cx, cy, depth, floor){
-  document.getElementById('rad-type').value = radType;
-  document.getElementById('rad-len').value = String(len);
-  document.getElementById('rad-h').value = String(ht);
-  document.getElementById('rad-depth').value = depth === undefined ? '' : String(depth);
-  document.getElementById('rad-floor').value = floor === undefined ? '' : String(floor);
   api.addRadiator();
   const r = api.furniture[api.furniture.length-1];
+  if(radType !== undefined) r.radType = radType;
+  if(len !== undefined) r.width = len;
+  if(ht !== undefined) r.height = ht;
+  if(depth !== undefined) r.depth = depth;
+  if(floor !== undefined) r.mountH = floor;
   r.cx = cx; r.cy = cy;
   api.snapBox(r);
   return r;
@@ -705,27 +707,32 @@ check('output rises with type, length and height', () => {
     : `T11 1000x600 ${base}W, T22 ${byType}W, 2m long ${byLen}W, 700h ${byHt}W, 300h ${shorter}W`;
 });
 
-check('the panel defaults to a 1m radiator', () => {
+check('one click adds a 1m single-convector radiator, 150 off the floor', () => {
   emptyRoom();
-  // Nothing typed at all: whatever the panel opens with is what gets added.
-  document.getElementById('rad-type').value = 'type22';
-  document.getElementById('rad-len').value = '';
-  document.getElementById('rad-h').value = '';
-  document.getElementById('rad-depth').value = '';
-  document.getElementById('rad-floor').value = '';
-  api.addRadiator();
+  api.addRadiator();                       // no options, no panel
   const r = api.furniture[api.furniture.length-1];
   const bad = [];
+  if(!r.isRad) bad.push('isRad not set');
   if(r.width !== 1000) bad.push(`length ${r.width}, expected 1000`);
-  if(r.height !== 600) bad.push(`height ${r.height}, expected 600`);
   if(r.mountH !== 150) bad.push(`off floor ${r.mountH}, expected 150`);
+  if(r.radType !== 'type11') bad.push(`type ${r.radType}, expected type11 (single convector)`);
+  if(r.depth !== api.RAD_SPECS.type11.depth)
+    bad.push(`depth ${r.depth}, expected ${api.RAD_SPECS.type11.depth}`);
+  if(api.selectedItem !== r) bad.push('not left selected');
   return bad.length ? fail(bad.join('; '))
-    : `1000 × ${r.height}mm, ${r.depth}mm deep, ${r.mountH}mm off the floor`;
+    : `${r.width} × ${r.height}mm, ${r.depth}mm deep (single convector), ${r.mountH}mm off the floor, selected`;
 });
 
-check('every radiator dimension can be any number', () => {
+check('the Add radiator button is a plain toolbar button with no panel', () => {
+  const html = fs.readFileSync(HTML, 'utf8');
+  if(!/<button onclick="addRadiator\(\)">Add radiator<\/button>/.test(html))
+    return fail('no plain Add radiator button in the toolbar');
+  if(/id="rad-panel"/.test(html)) return fail('the radiator panel is still in the markup');
+  return 'one button, no panel';
+});
+
+check('every radiator dimension can still be any number', () => {
   emptyRoom();
-  // Deliberately awkward figures, none of them on any old preset list.
   const r = dropRadiator('type22', 1337, 523, 3000, 200, 47, 92);
   const bad = [];
   if(r.width !== 1337) bad.push(`length ${r.width}`);
@@ -733,11 +740,57 @@ check('every radiator dimension can be any number', () => {
   if(r.depth !== 47) bad.push(`depth ${r.depth}`);
   if(r.mountH !== 92) bad.push(`off floor ${r.mountH}`);
   if(bad.length) return fail(bad.join('; '));
-  // And the footprint follows the typed numbers.
   const bb = api.boxBB(r);
   if(Math.abs((bb.x2-bb.x1) - 1337) > 0.001) return fail(`footprint spans ${bb.x2-bb.x1}`);
   if(Math.abs((bb.y2-bb.y1) - 47) > 0.001) return fail(`footprint depth ${bb.y2-bb.y1}`);
-  return `1337 × 523mm, 47mm deep, 92mm off the floor, all as typed`;
+  return `1337 × 523mm, 47mm deep, 92mm off the floor, all as set`;
+});
+
+check('a radiator on a wall offers three editable dimensions', () => {
+  emptyRoom();
+  const r = dropRadiator(undefined, 1000, 600, 3000, 200);
+  api.selectedItem = r;
+  api.drawPlan();
+  const tags = api.dimHitAreas.map(h => h.tag).filter(t => t && t.box === r);
+  const spans = tags.filter(t => t.type === 'box-span');
+  const gaps  = tags.filter(t => t.type === 'box-gap');
+  if(spans.length !== 1) return fail(`${spans.length} size dimensions, expected 1`);
+  if(gaps.length !== 2) return fail(`${gaps.length} gap dimensions, expected 2`);
+  return `its own length plus gaps to left and right — ${tags.length} clickable dimensions`;
+});
+
+check('clicking the size dimension changes the radiator length', () => {
+  const r = api.furniture[api.furniture.length-1];
+  api.selectedItem = r;
+  api.drawPlan();
+  const hit = api.dimHitAreas.find(h => h.tag && h.tag.type === 'box-span' && h.tag.box === r);
+  if(!hit) return fail('no size dimension to click');
+  // Click it, type a new length, apply — exactly the on-screen route.
+  api.openDim(hit.tag, hit.bx, hit.by);
+  document.getElementById('dim-inp').value = '1600';
+  api.confirmDim();
+  const bb = api.boxBB(r);
+  if(r.width !== 1600) return fail(`length is ${r.width} after typing 1600`);
+  if(Math.abs((bb.x2-bb.x1) - 1600) > 0.001) return fail(`footprint is ${bb.x2-bb.x1}`);
+  if(Math.abs(bb.y1) > 0.001) return fail(`came off the wall, back edge at y=${bb.y1}`);
+  return `retyped to ${r.width}mm on the canvas, still flush to the wall`;
+});
+
+check('the gap dimensions still move it along the wall', () => {
+  emptyRoom();
+  const r = dropRadiator(undefined, 1000, 600, 3000, 200);
+  api.selectedItem = r;
+  api.drawPlan();
+  const hit = api.dimHitAreas.find(h => h.tag && h.tag.type === 'box-gap'
+                                     && h.tag.side === 'lo' && h.tag.box === r);
+  if(!hit) return fail('no left-hand gap dimension');
+  api.openDim(hit.tag, hit.bx, hit.by);
+  document.getElementById('dim-inp').value = '250';
+  api.confirmDim();
+  const bb = api.boxBB(r);
+  return Math.abs(bb.x1 - 250) < 0.001
+    ? `set the left gap to 250mm, radiator now starts at x=${bb.x1}`
+    : fail(`left edge at ${bb.x1}, expected 250`);
 });
 
 check('an odd height still gets an output estimate', () => {

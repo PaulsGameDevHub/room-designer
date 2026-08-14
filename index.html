@@ -82,7 +82,7 @@ table.sched tr.total td{font-weight:600;border-top:1px solid var(--bd);border-bo
     <button id="btn-kitchen" onclick="togglePanel('kitchen-panel','btn-kitchen')">Kitchen</button>
     <button id="btn-furniture" onclick="togglePanel('furniture-panel','btn-furniture')">Furniture</button>
     <button id="btn-electric" onclick="togglePanel('electric-panel','btn-electric')">Sockets</button>
-    <button id="btn-rad" onclick="togglePanel('rad-panel','btn-rad')">Radiators</button>
+    <button onclick="addRadiator()">Add radiator</button>
     <button id="btn-schedule" onclick="toggleSchedule()">Schedule</button>
     <div class="sep"></div>
     <button id="btn-undo" onclick="undo()" title="Ctrl+Z">Undo</button>
@@ -195,26 +195,6 @@ table.sched tr.total td{font-weight:600;border-top:1px solid var(--bd);border-bo
         </div>
       </div>
 
-      <div id="rad-panel" style="display:none;">
-        <h3>Radiators</h3>
-        <div class="panel">
-          <div class="row">
-            <div><label for="rad-len" id="rad-len-label">Length (mm)</label><input id="rad-len" type="text" inputmode="numeric" value="1000"></div>
-            <div><label for="rad-h" id="rad-h-label">Height (mm)</label><input id="rad-h" type="text" inputmode="numeric" value="600"></div>
-          </div>
-          <div class="row">
-            <div><label for="rad-depth">Depth (mm)</label><input id="rad-depth" type="text" inputmode="numeric" value="100"></div>
-            <div><label for="rad-floor">Off floor (mm)</label><input id="rad-floor" type="text" inputmode="numeric" value="150"></div>
-          </div>
-          <div><label for="rad-type">Preset (optional)</label><select id="rad-type"></select></div>
-          <div class="hint" id="rad-size-display"></div>
-          <button class="primary" onclick="addRadiator()">Add radiator</button>
-          <div class="hint">Any size you like — type over any of the four figures.
-            A preset just fills them in. Every one can be changed again after
-            placing. Output is approximate, at &Delta;T50.</div>
-        </div>
-      </div>
-
       <div id="selected-panel" style="display:none;">
         <div class="panel" id="selected-info"></div>
       </div>
@@ -264,7 +244,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-14 14:54';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-14 15:04';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -1672,8 +1652,28 @@ function drawAngledItemDims(it){
   drawDimLine(a2.x, a2.y, h2.x, h2.y, fmtD(g.gapHi), -1, {type:'hyp-gap', item:it, side:'hi'}, true);
 }
 
+// The item's own size along the wall, drawn on its front face so it reads apart
+// from the two gap dimensions either side of it.
+function drawBoxSpanDim(b, bb){
+  const face = b.snappedFace;
+  const alongH = face === 'top' || face === 'bottom';
+  const tag = {type:'box-span', box:b};
+  if(alongH){
+    const frontY = face === 'top' ? bb.y2 : bb.y1;
+    const side = face === 'top' ? 1 : -1;
+    const a = toC(bb.x1, frontY), c = toC(bb.x2, frontY);
+    drawDimLine(a.x, a.y, c.x, c.y, fmtD(bb.x2-bb.x1), side, tag, true);
+  }else{
+    const frontX = face === 'left' ? bb.x2 : bb.x1;
+    const side = face === 'left' ? -1 : 1;
+    const a = toC(frontX, bb.y1), c = toC(frontX, bb.y2);
+    drawDimLine(a.x, a.y, c.x, c.y, fmtD(bb.y2-bb.y1), side, tag, true);
+  }
+}
+
 function drawBoxGapDims(b, bb){
   if(isAngled(b)){ drawAngledItemDims(b); return; }
+  drawBoxSpanDim(b, bb);
   const {nearLo, gapLo, nearHi, gapHi, alongH} = boxNearestObjects(b, bb);
   if(alongH){
     const cy = (toC(0,bb.y1).y + toC(0,bb.y2).y)/2;
@@ -1752,6 +1752,9 @@ function openDim(tag, cx, cy){
   }else if(tag.type === 'hyp-span'){
     lbl.textContent = 'Length along the angled wall';
     inp.value = fmtE(spanOf(tag.item));
+  }else if(tag.type === 'box-span'){
+    lbl.textContent = tag.box.isRad ? 'Radiator length' : 'Width along the wall';
+    inp.value = fmtE(tag.box.width);
   }
 
   const el = $('dim-editor');
@@ -1811,6 +1814,10 @@ function confirmDim(){
     const it = tag.item;
     if(it.len !== undefined) it.len = Math.max(50, val); else it.width = Math.max(50, val);
     placeOnHyp(it, it.snapCorner, it.snapT);
+  }else if(tag.type === 'box-span'){
+    tag.box.width = Math.max(50, val);
+    anchorBox(tag.box);
+    settleBox(tag.box);
   }else if(tag.type === 'hyp-gap'){
     const it = tag.item, g = itemHypGaps(it);
     if(g){
@@ -2744,25 +2751,17 @@ const fittingBB = f => aabbOf(fittingCorners(f));
 // A radiator is a box against a wall, so it rides on the furniture collection and
 // inherits snapping, runs, angled walls, elevation and PDF output for free. The
 // isRad flag is what separates it out for its own panel and schedule section.
+// One click drops a plain 1m single-convector radiator into the room. Everything
+// about it is then editable — the length and its position by clicking the
+// dimensions on the canvas, the rest in the sidebar.
 function addRadiator(){
-  const radType = RAD_SPECS[$('rad-type').value] ? $('rad-type').value : 'type22';
+  const radType = 'type11';                    // single panel, single convector
   const spec = RAD_SPECS[radType];
-  const d = spec.towel ? TOWEL_DEFAULTS : RAD_DEFAULTS;
-  // Every dimension is whatever was typed; the preset only seeded the boxes.
-  const num = (id, fallback, min) => {
-    const v = parseMM($(id).value);
-    return (isNaN(v) || v < min) ? fallback : v;
-  };
-  const len   = num('rad-len',   d.length, 50);
-  const ht    = num('rad-h',     d.height, 50);
-  const depth = num('rad-depth', spec.depth, 20);
-  const floor = num('rad-floor', d.floor, 0);
-
   const r = {
     type:'furniture', isRad:true, radType, fType:'radiator',
     label:spec.label.split(' · ')[0],
-    width:len, depth, height:ht,
-    mountH:floor, overhead:false,
+    width:RAD_DEFAULTS.length, depth:spec.depth, height:RAD_DEFAULTS.height,
+    mountH:RAD_DEFAULTS.floor, overhead:false,
     color:spec.color, snapToWall:true,
     cx:roomW/2, cy:roomH/2, rot:0, horiz:true,
     snapped:false, snappedFace:null, anchorWallCoord:null, locked:false
@@ -2771,8 +2770,8 @@ function addRadiator(){
   furniture.push(r);
   selectedItem = r;
   setMode('select'); showSelected(); requestDraw();
-  status(`${len}×${ht}mm, ${depth}mm deep, ${floor}mm off the floor, `
-    + `about ${radOutput(radType, len, ht)}W — drag it to a wall`);
+  status(`${r.width}mm radiator, ${r.depth}mm deep, ${r.mountH}mm off the floor — `
+    + `drag it to a wall, then click a dimension to change it`);
 }
 
 function addFitting(){
@@ -3558,7 +3557,6 @@ function togglePanel(panelId, btnId){
   $('kitchen-panel').style.display = 'none';
   $('furniture-panel').style.display = 'none';
   $('electric-panel').style.display = 'none';
-  $('rad-panel').style.display = 'none';
   $('label-place-panel').style.display = 'none';
   document.querySelectorAll('#toolbar button').forEach(b => b.classList.remove('active'));
   if(showing){
@@ -4302,36 +4300,6 @@ function initDropdowns(){
   fit.addEventListener('change', showFit);
   showFit();
 
-  const rt = $('rad-type'), rl = $('rad-len'), rh = $('rad-h');
-  const rd = $('rad-depth'), rf = $('rad-floor');
-  for(const [k, s] of Object.entries(RAD_SPECS)){
-    const o = el('option', {value:k, text:s.label});
-    if(k === 'type22') o.setAttribute('selected','');
-    rt.appendChild(o);
-  }
-  rt.value = 'type22';
-
-  // Choosing a preset only fills the boxes in; they stay freely editable.
-  const applyPreset = () => {
-    const spec = RAD_SPECS[rt.value] || RAD_SPECS.type22;
-    const d = spec.towel ? TOWEL_DEFAULTS : RAD_DEFAULTS;
-    $('rad-len-label').textContent = spec.towel ? 'Width (mm)' : 'Length (mm)';
-    rl.value = String(d.length);
-    rh.value = String(d.height);
-    rd.value = String(spec.depth);
-    rf.value = String(d.floor);
-    showRadSize();
-  };
-  const showRadSize = () => {
-    const n = (inp, fb) => { const v = parseMM(inp.value); return isNaN(v) ? fb : v; };
-    const a = n(rl, RAD_DEFAULTS.length), b = n(rh, RAD_DEFAULTS.height);
-    const dep = n(rd, 100), fl = n(rf, RAD_MOUNT_H);
-    $('rad-size-display').textContent =
-      `${a} × ${b}mm, ${dep}mm deep, ${fl}mm off the floor · about ${radOutput(rt.value, a, b)}W`;
-  };
-  rt.addEventListener('change', applyPreset);
-  for(const inp of [rl, rh, rd, rf]) inp.addEventListener('input', showRadSize);
-  applyPreset();
 }
 // ═══════════════════════════════════════════════════════════════════════════
 //  Schedule and costs
