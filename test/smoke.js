@@ -131,7 +131,8 @@ const exposed = `
   get dimHitAreas(){return dimHitAreas}, openDim, confirmDim, hitTest,
   get slopes(){return slopes}, addSlope, slopeBB, ptInSlope, clearHeightAt,
   slopeCrossing, elevClearHeightAt, elevHasSlope, HEADROOM_MM, SLOPE_DEFAULTS,
-  slopeOnWall, drawSlopeElevDims, drawSlopeBoxing, slopeRot, slopeDrop, slopeFall,
+  slopeOnWall, drawSlopeElevDims, drawSlopeBoxing, slopeBoxingQuad,
+  slopeRot, slopeDrop, slopeFall,
   setSlope, rotateSlope, snapSlope, SLOPE_DIRS,
   get past(){return past}, get future(){return future},
   set selectedItem(v){selectedItem=v}, get selectedItem(){return selectedItem},
@@ -712,22 +713,32 @@ check('a slope leaves the room ceiling height alone', () => {
       + `${(after.wallAreaMm2/1e6).toFixed(2)}m2, with ${Math.round(under)}mm clear under the boxing`;
 });
 
-check('the boxing hangs from the top of the slope, not from the ceiling line', () => {
+check('the boxing is fixed to the ceiling, whatever the drop', () => {
   emptyRoom();
   api.addSlope();
   const z = api.slopes[0];
   z.cx = 2000; z.cy = 400; z.width = 3000; z.depth = 800;
   z.axis = 'x';
-  api.setSlope(z, 1, 400, 500);          // top 400 below the ceiling, falls 500
-  const top = Math.max(z.hLo, z.hHi), bot = Math.min(z.hLo, z.hHi);
-  if(top !== 2000) return fail(`top of the boxing at ${top}, expected 2000`);
-  if(bot !== 1500) return fail(`underside at ${bot}, expected 1500`);
-  // Above the boxing the ceiling is still the ceiling.
+  api.setSlope(z, 1, 400, 500);   // underside starts 400 down, then falls 500
+  const under = Math.max(z.hLo, z.hHi), low = Math.min(z.hLo, z.hHi);
+  if(under !== 2000) return fail(`underside at the high end is ${under}, expected 2000`);
+  if(low !== 1500) return fail(`underside at the low end is ${low}, expected 1500`);
+
+  // Boxing is built off the ceiling, so its top edge must be the ceiling itself
+  // however far down the slope starts — never floating with a gap above it.
   document.getElementById('elev-wall').value = 'top';
-  api.setView('elev');
-  api.draw();                            // exercises drawSlopeBoxing
-  api.setView('plan');
-  return `boxing from ${top}mm down to ${bot}mm, ceiling untouched at ${api.roomCeil}mm above it`;
+  const info = api.elevInfo();
+  const tops = [];
+  for(const drop of [0, 400, 900]){
+    api.setSlope(z, 1, drop, 500);
+    const quad = api.slopeBoxingQuad(info, z);
+    if(!quad) return fail(`no boxing found on the wall at a ${drop}mm drop`);
+    tops.push(Math.round(quad.top));
+  }
+  api.setView('elev'); api.draw(); api.setView('plan');   // exercises the drawing
+  return tops.every(t => t === api.roomCeil)
+    ? `top stayed at the ${api.roomCeil}mm ceiling at drops of 0, 400 and 900`
+    : fail(`boxing tops were ${tops.join(', ')}, all should be ${api.roomCeil}`);
 });
 
 check('rotating the slope turns both the fall and the footprint', () => {

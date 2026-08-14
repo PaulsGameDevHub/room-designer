@@ -245,7 +245,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-14 21:20';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-14 21:31';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -1774,7 +1774,7 @@ function openDim(tag, cx, cy){
     lbl.textContent = 'Clear height here';
     inp.value = fmtE(s.hLo + tag.t*(s.hHi - s.hLo));
   }else if(tag.type === 'slope-drop'){
-    lbl.textContent = 'Drop from the ceiling';
+    lbl.textContent = 'Drop from ceiling before the slope starts';
     inp.value = fmtE(slopeDrop(tag.slope));
   }
 
@@ -2689,19 +2689,29 @@ function slopeOnWall(info, s){
   return {aLo, aHi, tLo:tAt(aLo), tHi:tAt(aHi)};
 }
 
-// The boxing itself: a solid wedge hanging under the untouched ceiling. Its top
-// edge is level and its underside slopes, so where the slope runs along this wall
-// it reads as a triangle, and where it runs into the wall you see the flat end of
-// it as a band of constant thickness.
+// The boxing itself: a solid wedge fixed to the underside of the ceiling. Its top
+// is ALWAYS the ceiling — boxing is built off the ceiling, so it can never float
+// below it with a gap. hLo and hHi are the underside, which is what slopes, so at
+// the high end the boxing is as thick as the drop and at the low end that plus the
+// fall. Where the slope runs along this wall it reads as a wedge; where it runs
+// into the wall you see its flat end as a band.
+// The boxing section on this wall, in millimetres: a level top at the ceiling and
+// the sloping underside beneath it. Kept apart from the drawing so it can be
+// checked directly.
+function slopeBoxingQuad(info, s){
+  const on = slopeOnWall(info, s);
+  if(!on) return null;
+  const hAt = t => s.hLo + t*(s.hHi - s.hLo);
+  return {top:roomCeil, aLo:on.aLo, aHi:on.aHi, hAtLo:hAt(on.tLo), hAtHi:hAt(on.tHi)};
+}
+
 function drawSlopeBoxing(info){
   for(const s of slopes){
-    const on = slopeOnWall(info, s);
-    if(!on) continue;
-    const top = Math.max(s.hLo, s.hHi);
-    const hAt = t => s.hLo + t*(s.hHi - s.hLo);
+    const g = slopeBoxingQuad(info, s);
+    if(!g) continue;
     const quad = [
-      toE(on.aLo, top), toE(on.aHi, top),
-      toE(on.aHi, hAt(on.tHi)), toE(on.aLo, hAt(on.tLo)),
+      toE(g.aLo, g.top), toE(g.aHi, g.top),
+      toE(g.aHi, g.hAtHi), toE(g.aLo, g.hAtLo),
     ];
     const isSel = selectedItem === s;
 
@@ -2754,14 +2764,14 @@ function drawSlopeElevDims(info){
         {type:'slope-height', slope:s, t:pt.t}, selectedItem === s);
     }
 
-    // Once the boxing hangs below the ceiling there is a gap worth dimensioning,
-    // and it is easier to set here than in the sidebar.
+    // How far below the ceiling the slope starts, which is also how thick the
+    // boxing is at its high end. Only worth a dimension once it is non-zero.
     const drop = slopeDrop(s);
     if(drop > 0){
       const a = (on.aLo + on.aHi)/2;
-      const boxTop = toE(a, Math.max(s.hLo, s.hHi));
+      const under = toE(a, Math.max(s.hLo, s.hHi));
       const ceil = toE(a, roomCeil);
-      drawDimLine(ceil.x, ceil.y, boxTop.x, boxTop.y, fmtD(drop), 1,
+      drawDimLine(ceil.x, ceil.y, under.x, under.y, fmtD(drop), 1,
         {type:'slope-drop', slope:s}, selectedItem === s);
     }
   }
@@ -4549,8 +4559,8 @@ function showSelected(){
     const runMm = runIsWidth ? it.width : it.depth;
     info.append(
       heading('Sloped ceiling'),
-      el('div', {cls:'hint', text:'Angled boxing under the ceiling. The room\'s '
-        + `${fmtD(roomCeil)} ceiling is unchanged; this hangs below it.`}),
+      el('div', {cls:'hint', text:'Angled boxing built off the ceiling. The room\'s '
+        + `${fmtD(roomCeil)} ceiling is unchanged; the boxing hangs from it.`}),
       readout('Underside at', fmtD(lowest) + ' at its low end'),
       readout('Falls', SLOPE_DIRS[slopeRot(it)] + ' of the plan'),
       btn('↻ Rotate 90°', () => {
@@ -4561,7 +4571,7 @@ function showSelected(){
       }),
       // The top is quoted as a drop below the ceiling, so 0 means flush with it;
       // the fall is how far it comes down over its length.
-      numField('Drop from ceiling (mm)', slopeDrop(it), v => {
+      numField('Drop before the slope starts (mm)', slopeDrop(it), v => {
         setSlope(it, slopeRot(it), v, slopeFall(it));
       }),
       numField('Fall over the slope (mm)', slopeFall(it), v => {
