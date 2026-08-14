@@ -82,6 +82,7 @@ table.sched tr.total td{font-weight:600;border-top:1px solid var(--bd);border-bo
     <button id="btn-kitchen" onclick="togglePanel('kitchen-panel','btn-kitchen')">Kitchen</button>
     <button id="btn-furniture" onclick="togglePanel('furniture-panel','btn-furniture')">Furniture</button>
     <button id="btn-electric" onclick="togglePanel('electric-panel','btn-electric')">Sockets</button>
+    <button id="btn-rad" onclick="togglePanel('rad-panel','btn-rad')">Radiators</button>
     <button id="btn-schedule" onclick="toggleSchedule()">Schedule</button>
     <div class="sep"></div>
     <button id="btn-undo" onclick="undo()" title="Ctrl+Z">Undo</button>
@@ -194,6 +195,21 @@ table.sched tr.total td{font-weight:600;border-top:1px solid var(--bd);border-bo
         </div>
       </div>
 
+      <div id="rad-panel" style="display:none;">
+        <h3>Radiators</h3>
+        <div class="panel">
+          <div><label for="rad-type">Type</label><select id="rad-type"></select></div>
+          <div class="row">
+            <div><label for="rad-len" id="rad-len-label">Length (mm)</label><select id="rad-len"></select></div>
+            <div><label for="rad-h" id="rad-h-label">Height (mm)</label><select id="rad-h"></select></div>
+          </div>
+          <div class="hint" id="rad-size-display"></div>
+          <button class="primary" onclick="addRadiator()">Add radiator</button>
+          <div class="hint">Sits 150mm off the floor and snaps to any wall. Outputs
+            are approximate, at &Delta;T50 — check the maker's figures before ordering.</div>
+        </div>
+      </div>
+
       <div id="selected-panel" style="display:none;">
         <div class="panel" id="selected-info"></div>
       </div>
@@ -243,7 +259,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-06 23:04';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-14 14:46';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -314,9 +330,11 @@ const FURN_SPECS = {
   toilet:   {cat:'Bathroom',label:'WC',              width:400,  depth:700, height:800,  color:'#4E93A8', snapToWall:true},
   basin:    {cat:'Bathroom',label:'Basin',           width:600,  depth:450, height:850,  color:'#4E93A8', snapToWall:true},
   vanity:   {cat:'Bathroom',label:'Vanity unit',     width:800,  depth:450, height:850,  color:'#4E93A8', snapToWall:true},
-  towelRad: {cat:'Bathroom',label:'Towel radiator',  width:600,  depth:100, height:1200, color:'#6B6B78', snapToWall:true, mountH:150},
+  // cat 'Legacy' keeps these loadable from older files without listing them in
+  // the furniture picker — radiators have their own tool now.
+  towelRad: {cat:'Legacy',  label:'Towel radiator',  width:600,  depth:100, height:1200, color:'#6B6B78', snapToWall:true, mountH:150},
 
-  radiator: {cat:'Storage & other',label:'Radiator',    width:1000,depth:100, height:600,  color:'#6B6B78', snapToWall:true, mountH:150},
+  radiator: {cat:'Legacy',  label:'Radiator',        width:1000, depth:100, height:600,  color:'#6B6B78', snapToWall:true, mountH:150},
   cupboard: {cat:'Storage & other',label:'Cupboard',    width:900, depth:600, height:2100, color:'#8A8A96', snapToWall:true},
   shelving: {cat:'Storage & other',label:'Shelving',    width:900, depth:300, height:1800, color:'#8A8A96', snapToWall:true},
   boiler:   {cat:'Storage & other',label:'Boiler',      width:450, depth:350, height:800,  color:'#8A8A96', snapToWall:true, mountH:1200, overhead:true},
@@ -334,6 +352,34 @@ const FITTING_SPECS = {
   cooker:  {label:'Cooker point',  code:'CCU', width:146, height:86, mountH:1100, color:'#D9534F'},
 };
 const PLATE_D = 30;      // how far a fitting is drawn off the wall in plan, mm
+
+// Radiators. Panel depth follows the type — a double panel stands noticeably
+// further off the wall, which matters in plan. Depths exclude valves and pipework.
+// wPerM600 is the approximate output in watts per metre of length for a 600mm
+// high panel at delta-T 50; real figures vary by maker, so treat it as a guide.
+const RAD_SPECS = {
+  type11: {label:'Type 11 · single panel', depth:60,  wPerM600:1000, color:'#6B8FA8'},
+  type21: {label:'Type 21 · single plus',  depth:80,  wPerM600:1400, color:'#6B8FA8'},
+  type22: {label:'Type 22 · double panel', depth:100, wPerM600:1800, color:'#5A7E96'},
+  towel:  {label:'Towel rail',             depth:100, wPerM600:300,  color:'#4E93A8', towel:true},
+};
+const RAD_LENGTHS = [400, 600, 800, 1000, 1200, 1400, 1600, 1800, 2000];
+const RAD_HEIGHTS = [300, 450, 600, 700];
+const TOWEL_WIDTHS = [400, 500, 600];
+const TOWEL_HEIGHTS = [800, 1000, 1200, 1400, 1600];
+// Output does not scale linearly with height, so scale off the 600mm figure.
+const RAD_HEIGHT_FACTOR = {300:0.55, 450:0.78, 600:1, 700:1.13};
+const RAD_MOUNT_H = 150;   // underside of the panel above the floor, mm
+
+// Approximate output in watts at delta-T 50.
+function radOutput(radType, lengthMm, heightMm){
+  const spec = RAD_SPECS[radType];
+  if(!spec) return 0;
+  if(spec.towel) return Math.round(spec.wPerM600 * (heightMm/1000) * (lengthMm/500));
+  const factor = RAD_HEIGHT_FACTOR[heightMm]
+    ?? clamp(heightMm/600, 0.4, 1.4);      // interpolate a hand-typed height
+  return Math.round(spec.wPerM600 * (lengthMm/1000) * factor);
+}
 
 const LABEL_SIZES = {small:14, medium:20, large:28};
 
@@ -2698,6 +2744,30 @@ function ptInFitting(mx, my, f){
 }
 const fittingBB = f => aabbOf(fittingCorners(f));
 
+// A radiator is a box against a wall, so it rides on the furniture collection and
+// inherits snapping, runs, angled walls, elevation and PDF output for free. The
+// isRad flag is what separates it out for its own panel and schedule section.
+function addRadiator(){
+  const radType = RAD_SPECS[$('rad-type').value] ? $('rad-type').value : 'type22';
+  const spec = RAD_SPECS[radType];
+  const a = parseInt($('rad-len').value, 10) || (spec.towel ? 500 : 1000);
+  const b = parseInt($('rad-h').value, 10) || (spec.towel ? 1200 : 600);
+  const r = {
+    type:'furniture', isRad:true, radType, fType:'radiator',
+    label:spec.label.split(' · ')[0],
+    width:a, depth:spec.depth, height:b,
+    mountH:RAD_MOUNT_H, overhead:false,
+    color:spec.color, snapToWall:true,
+    cx:roomW/2, cy:roomH/2, rot:0, horiz:true,
+    snapped:false, snappedFace:null, anchorWallCoord:null, locked:false
+  };
+  pushHistory();
+  furniture.push(r);
+  selectedItem = r;
+  setMode('select'); showSelected(); requestDraw();
+  status(`${spec.label} ${a}×${b}mm, about ${radOutput(radType, a, b)}W — drag it to a wall`);
+}
+
 function addFitting(){
   const fType = FITTING_SPECS[$('fit-type').value] ? $('fit-type').value : 'socket2';
   const spec = FITTING_SPECS[fType];
@@ -3298,6 +3368,25 @@ function applySnapshot(s){
     ku.cy ??= roomH/2;
   }
   for(const f of furniture){
+    // Radiators live in this collection but take their defaults from RAD_SPECS.
+    if(f.isRad){
+      const rs = RAD_SPECS[f.radType] || RAD_SPECS.type22;
+      f.type ??= 'furniture';
+      f.radType ??= 'type22';
+      f.label ??= rs.label.split(' · ')[0];
+      f.width ??= 1000;
+      f.depth ??= rs.depth;
+      f.height ??= 600;
+      f.mountH ??= RAD_MOUNT_H;
+      f.color ??= rs.color;
+      f.snapToWall ??= true;
+      f.horiz ??= f.snappedFace === 'left' || f.snappedFace === 'right' ? false : true;
+      f.rot ??= FACE_TO_ROT[f.snappedFace] ?? 0;
+      f.snapType ??= f.snappedFace ? 'axis' : null;
+      f.cx ??= roomW/2;
+      f.cy ??= roomH/2;
+      continue;
+    }
     const spec = FURN_SPECS[f.fType] || {};
     f.type ??= 'furniture';
     f.label ??= spec.label || 'Item';
@@ -3462,6 +3551,7 @@ function togglePanel(panelId, btnId){
   $('kitchen-panel').style.display = 'none';
   $('furniture-panel').style.display = 'none';
   $('electric-panel').style.display = 'none';
+  $('rad-panel').style.display = 'none';
   $('label-place-panel').style.display = 'none';
   document.querySelectorAll('#toolbar button').forEach(b => b.classList.remove('active'));
   if(showing){
@@ -4088,6 +4178,33 @@ function showSelected(){
       btn('↻ Rotate 90°', () => { pushHistory(); setBoxRot(it, (it.rot ?? 0)+1); snapBox(it); showSelected(); requestDraw(); }),
       lockBtn(it), delBtn()
     );
+  }else if(it.isRad){
+    const spec = RAD_SPECS[it.radType] || RAD_SPECS.type22;
+    const out = radOutput(it.radType, it.width, it.height);
+    info.append(
+      heading(spec.label),
+      readout('Status', boxWhere(it)),
+      readout('Output (approx, ΔT50)', out + 'W'),
+      selField('Type', Object.entries(RAD_SPECS).map(([k,s]) => [k, s.label]), it.radType, v => {
+        const ns = RAD_SPECS[v];
+        it.radType = v;
+        it.label = ns.label.split(' · ')[0];
+        it.depth = ns.depth;
+        it.color = ns.color;
+        anchorBox(it); settleBox(it);
+      }),
+      numField(spec.towel ? 'Width (mm)' : 'Length (mm)', it.width, v => {
+        it.width = Math.max(100, v); anchorBox(it); settleBox(it);
+      }, {min:100}),
+      numField('Height (mm)', it.height, v => { it.height = Math.max(100, v); }, {min:100}),
+      numField('Depth (mm)', it.depth, v => { it.depth = Math.max(30, v); anchorBox(it); settleBox(it); }, {min:30}),
+      numField('Height off floor (mm)', it.mountH ?? RAD_MOUNT_H, v => { it.mountH = Math.max(0, v); }),
+      el('div', {cls:'hint', text:`${it.width} × ${it.height}mm, ${it.depth}mm deep. `
+        + `Output is a guide only — check the maker's figures.`
+        + ((it.mountH ?? 0) + it.height > roomCeil ? ' Currently taller than the ceiling.' : '')}),
+      btn('↻ Rotate 90°', () => { pushHistory(); setBoxRot(it, (it.rot ?? 0)+1); snapBox(it); showSelected(); requestDraw(); }),
+      lockBtn(it), delBtn()
+    );
   }else if(furniture.includes(it)){
     info.append(
       heading(it.label),
@@ -4177,6 +4294,37 @@ function initDropdowns(){
   };
   fit.addEventListener('change', showFit);
   showFit();
+
+  const rt = $('rad-type'), rl = $('rad-len'), rh = $('rad-h');
+  for(const [k, s] of Object.entries(RAD_SPECS)){
+    const o = el('option', {value:k, text:s.label});
+    if(k === 'type22') o.setAttribute('selected','');
+    rt.appendChild(o);
+  }
+  rt.value = 'type22';
+  const fillRadSizes = () => {
+    const spec = RAD_SPECS[rt.value] || RAD_SPECS.type22;
+    const lens = spec.towel ? TOWEL_WIDTHS : RAD_LENGTHS;
+    const hts  = spec.towel ? TOWEL_HEIGHTS : RAD_HEIGHTS;
+    $('rad-len-label').textContent = spec.towel ? 'Width (mm)' : 'Length (mm)';
+    rl.textContent = '';
+    for(const v of lens) rl.appendChild(el('option', {value:v, text:v+'mm'}));
+    rl.value = String(spec.towel ? 500 : 1000);
+    rh.textContent = '';
+    for(const v of hts) rh.appendChild(el('option', {value:v, text:v+'mm'}));
+    rh.value = String(spec.towel ? 1200 : 600);
+    showRadSize();
+  };
+  const showRadSize = () => {
+    const spec = RAD_SPECS[rt.value] || RAD_SPECS.type22;
+    const a = parseInt(rl.value,10) || 1000, b = parseInt(rh.value,10) || 600;
+    $('rad-size-display').textContent =
+      `${a} × ${b}mm, ${spec.depth}mm deep · about ${radOutput(rt.value, a, b)}W`;
+  };
+  rt.addEventListener('change', fillRadSizes);
+  rl.addEventListener('change', showRadSize);
+  rh.addEventListener('change', showRadSize);
+  fillRadSizes();
 }
 // ═══════════════════════════════════════════════════════════════════════════
 //  Schedule and costs
@@ -4215,15 +4363,34 @@ function computeSchedule(){
     a.kuType.localeCompare(b.kuType) || a.width - b.width);
   const unitTotal = units.reduce((n,u) => n+u.count, 0);
 
-  // Furniture grouped by item.
+  // Furniture grouped by item. Radiators are listed separately below.
   const furnMap = new Map();
   for(const f of furniture){
+    if(f.isRad) continue;
     const key = f.fType + '|' + f.width + '|' + f.depth;
     const row = furnMap.get(key) || {label:f.label, width:f.width, depth:f.depth, count:0};
     row.count++;
     furnMap.set(key, row);
   }
   const furn = [...furnMap.values()].sort((a,b) => a.label.localeCompare(b.label));
+
+  // Radiators, grouped by type and size, with the room's total output.
+  const radMap = new Map();
+  let radWatts = 0;
+  for(const r of furniture){
+    if(!r.isRad) continue;
+    const w = radOutput(r.radType, r.width, r.height);
+    radWatts += w;
+    const key = r.radType + '|' + r.width + '|' + r.height;
+    const spec = RAD_SPECS[r.radType] || {};
+    const row = radMap.get(key) || {label:spec.label || r.label, radType:r.radType,
+                                    width:r.width, height:r.height, watts:w, count:0};
+    row.count++;
+    radMap.set(key, row);
+  }
+  const rads = [...radMap.values()].sort((a,b) =>
+    a.radType.localeCompare(b.radType) || a.width - b.width);
+  const radTotal = rads.reduce((n,r) => n+r.count, 0);
 
   // Electrical fittings, grouped by type and mounting height.
   const fitMap = new Map();
@@ -4262,7 +4429,7 @@ function computeSchedule(){
     areaMm2, perimeterMm, wallAreaMm2, openingAreaMm2,
     netWallAreaMm2: Math.max(0, wallAreaMm2 - openingAreaMm2),
     units, unitTotal, worktopMm, furn, doors, windows, internalWallMm,
-    fits, fitTotal,
+    fits, fitTotal, rads, radTotal, radWatts,
     cost:{lines, grand}
   };
 }
@@ -4334,6 +4501,19 @@ function refreshSchedule(){
       s.furn.map(f => [f.label, f.width+'×'+f.depth, String(f.count)]),
       ['Total items', '', String(s.furn.reduce((n,f) => n+f.count, 0))]
     ));
+  }
+
+  if(s.rads.length){
+    body.append(el('div', {cls:'divider'}));
+    body.append(heading('Radiators'));
+    body.append(table(['Type','Size','Qty'],
+      s.rads.map(r => [r.label.replace(/^Type /,'T').replace(' · ',' '),
+                       `${r.width}×${r.height}`, String(r.count)]),
+      ['Total output', '', s.radWatts + 'W']
+    ));
+    body.append(el('div', {cls:'hint',
+      text:`${s.radTotal} radiator${s.radTotal === 1 ? '' : 's'} giving about `
+        + `${s.radWatts}W at ΔT50. Approximate — confirm against the maker's data.`}));
   }
 
   if(s.fits.length){
@@ -5047,6 +5227,14 @@ function schedulePage(){
     cols3('Item', 'Size', 'Qty', true);
     for(const f of s.furn) cols3(f.label, f.width+'x'+f.depth, String(f.count));
     cols3('Total', '', String(s.furn.reduce((n,f) => n+f.count, 0)), true);
+    gap();
+  }
+
+  if(s.rads.length){
+    sectionTitle('Radiators');
+    cols3('Type', 'Size', 'Qty', true);
+    for(const r of s.rads) cols3(r.label.replace(' · ',' '), `${r.width}x${r.height}`, String(r.count));
+    cols3('Total output', '', s.radWatts + 'W', true);
     gap();
   }
 

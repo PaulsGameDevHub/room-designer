@@ -47,6 +47,17 @@ set in the sidebar.
 **Kitchen units** — base, wall, tall and island, with real carcass and door depths.
 Wall units are drawn dashed to show they are overhead.
 
+**Radiators** — Type 11 single panel, Type 21 single plus, Type 22 double panel and
+towel rails. Panel depth follows the type (60 / 80 / 100mm), which matters in plan
+because a double panel stands noticeably further into the room. Standard lengths from
+400 to 2000mm against heights of 300 / 450 / 600 / 700mm, or any size typed by hand.
+They sit 150mm off the floor, snap to any wall, join runs, and appear at true height
+in Elevation.
+
+The schedule lists them by type and size and totals the room's output in watts. Those
+figures are approximate, at ΔT50, scaled from a per-metre rate — a guide for sizing,
+not a substitute for the manufacturer's data.
+
 **Sockets and switches** — double socket, single socket, light switch, fused switch
 and cooker point. Each has a default height measured from the finished floor to the
 centre of the plate: 1100mm for sockets, the fused switch and the cooker point,

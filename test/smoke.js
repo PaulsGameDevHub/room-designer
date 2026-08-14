@@ -68,7 +68,9 @@ const IDS = ['canvas','canvas-wrap','status','sidebar','toolbar','dim-editor','d
   'schedule-panel','schedule-body','snap-grid','show-dims','btn-select','btn-label','btn-kitchen',
   'btn-furniture','btn-schedule','btn-undo','btn-redo','btn-plan','btn-elev','elev-wall','load-input',
   'pdf-scale', 'status-msg', 'build', 'btn-wall',
-  'btn-electric', 'electric-panel', 'fit-type', 'fit-height', 'fit-size-display'];
+  'btn-electric', 'electric-panel', 'fit-type', 'fit-height', 'fit-size-display',
+  'btn-rad', 'rad-panel', 'rad-type', 'rad-len', 'rad-h', 'rad-len-label',
+  'rad-h-label', 'rad-size-display'];
 for(const id of IDS) byId[id] = mkEl(id === 'canvas' ? 'canvas' : 'div', id);
 byId['room-w'].value = '8220';
 byId['room-h'].value = '5050';
@@ -126,6 +128,7 @@ const exposed = `
   dwGeom, dwCorners, ptInDrawnWall, pickAt,
   get fittings(){return fittings}, addFitting, snapToSurface, fittingCorners,
   ptInFitting, fittingBB, drawFittings, FITTING_SPECS, pointInPoly,
+  addRadiator, radOutput, RAD_SPECS, RAD_MOUNT_H,
   get past(){return past}, get future(){return future},
   set selectedItem(v){selectedItem=v}, get selectedItem(){return selectedItem},
   addWallPiece, addCorner, addKitchenUnit, addFurniture, addDoor, addWindow,
@@ -663,6 +666,141 @@ check('clipByConvex intersects two rotated rectangles', () => {
   return Math.abs(area-expect) < 1
     ? `${Math.round(area)}mm2, matches the expected octagon`
     : fail(`${Math.round(area)} vs expected ${Math.round(expect)}`);
+});
+
+// ── Radiators ────────────────────────────────────────────────────────────────
+function dropRadiator(radType, len, ht, cx, cy){
+  document.getElementById('rad-type').value = radType;
+  document.getElementById('rad-len').value = String(len);
+  document.getElementById('rad-h').value = String(ht);
+  api.addRadiator();
+  const r = api.furniture[api.furniture.length-1];
+  r.cx = cx; r.cy = cy;
+  api.snapBox(r);
+  return r;
+}
+
+check('radiator types have sensible depths, deepest for a double panel', () => {
+  const t11 = api.RAD_SPECS.type11, t21 = api.RAD_SPECS.type21, t22 = api.RAD_SPECS.type22;
+  if(!(t11.depth < t21.depth && t21.depth < t22.depth))
+    return fail(`depths ${t11.depth}/${t21.depth}/${t22.depth} are not increasing`);
+  if(!api.RAD_SPECS.towel) return fail('no towel rail type');
+  return `T11 ${t11.depth}mm, T21 ${t21.depth}mm, T22 ${t22.depth}mm, plus a towel rail`;
+});
+
+check('output rises with type, length and height', () => {
+  const base = api.radOutput('type11', 1000, 600);
+  const byType = api.radOutput('type22', 1000, 600);
+  const byLen = api.radOutput('type11', 2000, 600);
+  const byHt = api.radOutput('type11', 1000, 700);
+  const shorter = api.radOutput('type11', 1000, 300);
+  const bad = [];
+  if(byType <= base) bad.push(`T22 ${byType}W not above T11 ${base}W`);
+  if(Math.abs(byLen - base*2) > 1) bad.push(`double length gave ${byLen}W, not ${base*2}W`);
+  if(byHt <= base) bad.push(`700mm ${byHt}W not above 600mm ${base}W`);
+  if(shorter >= base) bad.push(`300mm ${shorter}W not below 600mm ${base}W`);
+  return bad.length ? fail(bad.join('; '))
+    : `T11 1000x600 ${base}W, T22 ${byType}W, 2m long ${byLen}W, 700h ${byHt}W, 300h ${shorter}W`;
+});
+
+check('a radiator snaps to a wall 150mm off the floor', () => {
+  emptyRoom();
+  const r = dropRadiator('type22', 1200, 600, 3000, 200);
+  if(!r.isRad) return fail('the isRad flag was not set');
+  if(!r.snapped || r.snappedFace !== 'top') return fail(`snapped=${r.snapped} face=${r.snappedFace}`);
+  if(r.mountH !== api.RAD_MOUNT_H) return fail(`mountH is ${r.mountH}, expected ${api.RAD_MOUNT_H}`);
+  const bb = api.boxBB(r);
+  if(Math.abs(bb.y1) > 0.001) return fail(`back edge at y=${bb.y1}, expected 0`);
+  return `on the top wall, ${r.width}×${r.height}mm, ${r.depth}mm deep, ${r.mountH}mm off the floor`;
+});
+
+check('a radiator shows in the elevation between 150 and 750', () => {
+  emptyRoom();
+  dropRadiator('type22', 1200, 600, 3000, 200);
+  document.getElementById('elev-wall').value = 'top';
+  const items = api.elevItems(api.elevInfo()).filter(i => i.obj && i.obj.isRad);
+  if(items.length !== 1) return fail(`${items.length} radiators in the elevation`);
+  const it = items[0];
+  if(Math.abs(it.z1 - 150) > 0.001 || Math.abs(it.z2 - 750) > 0.001)
+    return fail(`spans ${it.z1}-${it.z2}, expected 150-750`);
+  api.setView('elev'); api.drawElevation(); api.setView('plan');
+  return `drawn from ${it.z1}mm to ${it.z2}mm`;
+});
+
+check('a radiator joins a wall run and cannot overlap furniture', () => {
+  emptyRoom();
+  const r = dropRadiator('type22', 1000, 600, 2000, 200);
+  document.getElementById('furn-cat').value = 'Living';
+  document.getElementById('furn-type').value = 'bookcase';
+  api.addFurniture();
+  const shelf = api.furniture[api.furniture.length-1];
+  shelf.cx = 2600; shelf.cy = 200;
+  api.snapBox(shelf);
+  const rb = api.boxBB(r), sb = api.boxBB(shelf);
+  const ox = Math.min(rb.x2,sb.x2) - Math.max(rb.x1,sb.x1);
+  const oy = Math.min(rb.y2,sb.y2) - Math.max(rb.y1,sb.y1);
+  const overlap = (ox > 0 && oy > 0) ? ox*oy : 0;
+  return overlap < 1
+    ? `bookcase sits clear of the radiator (${Math.round(rb.x2)} then ${Math.round(sb.x1)})`
+    : fail(`overlapping by ${Math.round(overlap)}mm2`);
+});
+
+check('the schedule totals radiator output and keeps them out of the furniture list', () => {
+  emptyRoom();
+  dropRadiator('type22', 1200, 600, 2000, 200);
+  dropRadiator('type11', 800, 600, 6000, 200);
+  document.getElementById('furn-cat').value = 'Living';
+  document.getElementById('furn-type').value = 'sofa2';
+  api.addFurniture();
+  const sofa = api.furniture[api.furniture.length-1];
+  sofa.cx = 4000; sofa.cy = 4800;
+  api.snapBox(sofa);
+
+  const s = api.computeSchedule();
+  const expect = api.radOutput('type22',1200,600) + api.radOutput('type11',800,600);
+  if(s.radTotal !== 2) return fail(`radTotal ${s.radTotal}, expected 2`);
+  if(s.radWatts !== expect) return fail(`radWatts ${s.radWatts}, expected ${expect}`);
+  if(s.furn.some(f => /radiator|panel/i.test(f.label)))
+    return fail('a radiator leaked into the furniture list');
+  if(!s.furn.some(f => /sofa/i.test(f.label)))
+    return fail('the sofa went missing from the furniture list');
+  return `${s.radTotal} radiators totalling ${s.radWatts}W, listed apart from ${s.furn.length} furniture row(s)`;
+});
+
+check('radiators survive save and load', () => {
+  const before = api.furniture.filter(f => f.isRad).map(r => ({t:r.radType, w:r.width, h:r.height, m:r.mountH}));
+  if(before.length !== 2) return fail(`${before.length} radiators to start with`);
+  api.applySnapshot(JSON.parse(JSON.stringify(api.roomData())));
+  const after = api.furniture.filter(f => f.isRad);
+  if(after.length !== before.length) return fail(`${before.length} before, ${after.length} after`);
+  for(let i=0; i<before.length; i++){
+    const b = before[i], a = after[i];
+    if(a.radType !== b.t || a.width !== b.w || a.height !== b.h || a.mountH !== b.m)
+      return fail(`radiator ${i} changed: ${JSON.stringify(a)} vs ${JSON.stringify(b)}`);
+  }
+  api.drawPlan();
+  const p = api.planPage(50);
+  return `both survived with type, size and height intact; PDF ${p.content.length} bytes`;
+});
+
+check('the old furniture radiators are hidden from the picker but still load', () => {
+  const html = fs.readFileSync(HTML, 'utf8');
+  for(const key of ['radiator:', 'towelRad:']){
+    const line = html.split('\n').find(l => l.includes(key) && l.includes('cat:'));
+    if(!line) return fail(`${key} entry has gone, so old files would lose its size`);
+    if(!/cat:'Legacy'/.test(line)) return fail(`${key} is still listed in a visible category`);
+  }
+  // And a v1-style file naming the old type still opens.
+  api.applySnapshot({
+    roomW:4000, roomH:3000, roomCeil:2400,
+    drawnWalls:[], corners:[], roomLabels:[], openings:[], kitchenUnits:[], wallPieces:[], fittings:[],
+    furniture:[{fType:'radiator', cx:2000, cy:200, snapped:true, snappedFace:'top', anchorWallCoord:0, horiz:true}]
+  });
+  const f = api.furniture[0];
+  api.drawPlan();
+  return f && f.width === 1000 && f.height === 600
+    ? `both kept as Legacy; an old file's radiator still loads at ${f.width}×${f.height}`
+    : fail(`old radiator loaded as ${f && f.width}×${f && f.height}`);
 });
 
 // ── Sockets and switches ─────────────────────────────────────────────────────
