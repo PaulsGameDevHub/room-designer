@@ -106,6 +106,7 @@ table.sched tr.total td{font-weight:600;border-top:1px solid var(--bd);border-bo
     <button id="btn-furniture" onclick="togglePanel('furniture-panel','btn-furniture')">Furniture</button>
     <button id="btn-electric" onclick="togglePanel('electric-panel','btn-electric')">Sockets</button>
     <button onclick="addRadiator()">Add radiator</button>
+    <button onclick="addBoxing()">Add boxing</button>
     <button onclick="addSlope()">Sloped ceiling</button>
     <button id="btn-schedule" onclick="toggleSchedule()">Schedule</button>
     <div class="sep"></div>
@@ -268,7 +269,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-15 12:17';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-15 12:58';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -361,6 +362,12 @@ const FITTING_SPECS = {
   cooker:  {label:'Cooker point',  code:'CCU', width:146, height:86, mountH:1100, color:'#D9534F'},
 };
 const PLATE_D = 30;      // how far a fitting is drawn off the wall in plan, mm
+
+// Boxing: a plain box for a beam along the ceiling or a pipe casing up a wall.
+// Starts the same size as a wall piece and full height, then the height and how
+// far it sits off the floor are edited to suit.
+const BOXING_DEFAULTS = {width:1000, depth:100};
+const BOXING_COLOR = '#A0846B';
 
 // A sloped ceiling zone: a rectangle over part of the plan where the ceiling ramps
 // linearly from one edge to the other. hLo is the height at the low-coordinate
@@ -775,7 +782,11 @@ function unsnapBox(b){
   b.angle = null;
 }
 
-function snapBox(b){
+// keepOrientation is set after a deliberate turn: without it the re-snap picks an
+// orientation from whichever wall is nearest, which for a box already against a
+// wall is the same one it just turned away from, undoing the turn.
+function snapBox(b, opts){
+  const keepOrientation = !!(opts && opts.keepOrientation);
   const startX = b.cx, startY = b.cy;
 
   if(!b.snapToWall){
@@ -817,6 +828,8 @@ function snapBox(b){
 
   for(const cand of candidates){
     if(cand.d >= BOX_SNAP_MM) break;
+    // After a turn, only walls that keep the chosen orientation are candidates.
+    if(keepOrientation && (cand.kind === 'corner' || cand.horiz !== b.horiz)) continue;
     b.cx = startX; b.cy = startY;
 
     if(cand.kind === 'corner'){
@@ -862,6 +875,8 @@ const ptInBox = (mx, my, b) => ptInItem(mx, my, b);
 // come close they should click flush, so a kitchen run adds up exactly.
 function settleInRun(b){
   if(!b.snapped) return;
+  // Boxing takes no part in runs: nothing butts up to it and it pushes nothing.
+  if(b.isBoxing) return;
   if(isAngled(b)){ settleInAngledRun(b); return; }
   if(!b.snappedFace) return;
   const face = b.snappedFace;
@@ -874,7 +889,7 @@ function settleInRun(b){
     return {lo:bb[key+'1'], hi:bb[key+'2'], half:(bb[key+'2']-bb[key+'1'])/2};
   };
   const neighbours = () => boxes().filter(o =>
-    o !== b && o.snapped && !isAngled(o) && o.snappedFace === face);
+    o !== b && o.snapped && !isAngled(o) && !o.isBoxing && o.snappedFace === face);
 
   // 1. Slide out of any overlap, toward whichever side is nearer.
   for(let pass=0; pass<4; pass++){
@@ -1240,6 +1255,8 @@ function boxNearestObjects(b, bb){
 
   for(const other of boxes()){
     if(other === b || !other.snapped) continue;
+    // Boxing is deliberately not an obstacle — a unit may sit inside it.
+    if(other.isBoxing) continue;
     // Square items on the same wall, or anything angled that reaches into the band.
     if(isAngled(other) ? !inBand(boxBB(other)) : other.snappedFace !== face) continue;
     obstacles.push(interval(boxBB(other)));
@@ -2221,11 +2238,27 @@ function drawBoxes(){
     }else{
       ctx.rect(c1.x, c1.y, W, H);
     }
-    ctx.fill(); ctx.stroke();
+    ctx.fill();
+    // Boxing is hatched, so it never reads as a unit at a glance.
+    if(b.isBoxing){
+      ctx.save();
+      ctx.clip();
+      ctx.strokeStyle = col+'88';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      const x1c = Math.min(c1.x, c2.x) - Math.abs(H), x2c = Math.max(c1.x, c2.x) + Math.abs(H);
+      for(let x = x1c; x < x2c; x += 7){
+        ctx.moveTo(x, Math.max(c1.y, c2.y));
+        ctx.lineTo(x + Math.abs(H), Math.min(c1.y, c2.y));
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.stroke();
     ctx.setLineDash([]);
 
     // Door / front face line, on the side away from the wall
-    if(!isDrag && b.snapped){
+    if(!isDrag && b.snapped && !b.isBoxing){
       const fd = b.type === 'kitchen' ? b.doorDepth : Math.min(60, b.depth*0.2);
       ctx.strokeStyle = b.overhead ? col+'88' : isSel ? COL.sel : col+'cc';
       ctx.lineWidth = 1; ctx.beginPath();
@@ -3229,6 +3262,27 @@ function drawSlopeDims(s, bb){
   drawDimLine(b.x, a.y, b.x, b.y, fmtD(s.depth), 1, {type:'slope-dim', slope:s, which:'depth'}, true);
 }
 
+// Boxing rides on the furniture collection, so it inherits wall snapping, angled
+// walls, elevation, PDF and save. The isBoxing flag is what keeps it out of the
+// collision rules: kitchen units are meant to be able to sit inside it, because
+// that clash is the drawing telling the joiner where to scribe the unit.
+function addBoxing(){
+  const b = {
+    type:'furniture', isBoxing:true, fType:'boxing', label:'Boxing',
+    width:BOXING_DEFAULTS.width, depth:BOXING_DEFAULTS.depth,
+    height:roomCeil, mountH:0, overhead:false,
+    color:BOXING_COLOR, snapToWall:true,
+    cx:roomW/2, cy:roomH/2, rot:0, horiz:true,
+    snapped:false, snappedFace:null, anchorWallCoord:null, locked:false
+  };
+  pushHistory();
+  furniture.push(b);
+  selectedItem = b;
+  setMode('select'); showSelected(); requestDraw();
+  status(`Boxing ${b.width}×${b.depth}mm, full height — drag it to a wall, then set `
+    + `its height and how far off the floor it sits`);
+}
+
 function addFitting(){
   const fType = FITTING_SPECS[$('fit-type').value] ? $('fit-type').value : 'socket2';
   const spec = FITTING_SPECS[fType];
@@ -3842,6 +3896,23 @@ function applySnapshot(s){
     ku.cy ??= roomH/2;
   }
   for(const f of furniture){
+    if(f.isBoxing){
+      f.type ??= 'furniture';
+      f.fType ??= 'boxing';
+      f.label ??= 'Boxing';
+      f.width ??= BOXING_DEFAULTS.width;
+      f.depth ??= BOXING_DEFAULTS.depth;
+      f.height ??= roomCeil;
+      f.mountH ??= 0;
+      f.color ??= BOXING_COLOR;
+      f.snapToWall ??= true;
+      f.horiz ??= f.snappedFace === 'left' || f.snappedFace === 'right' ? false : true;
+      f.rot ??= FACE_TO_ROT[f.snappedFace] ?? 0;
+      f.snapType ??= f.snappedFace ? 'axis' : null;
+      f.cx ??= roomW/2;
+      f.cy ??= roomH/2;
+      continue;
+    }
     // Radiators live in this collection but take their defaults from RAD_SPECS.
     if(f.isRad){
       const rs = RAD_SPECS[f.radType] || RAD_SPECS.type22;
@@ -4437,7 +4508,7 @@ function rotateSelected(){
     it.rot = (it.rot+1) % 4;
   }else if(kitchenUnits.includes(it) || furniture.includes(it)){
     setBoxRot(it, (it.rot ?? 0) + 1);
-    snapBox(it);
+    snapBox(it, {keepOrientation:true});
   }else if(openings.includes(it)){
     it.swing = it.swing === 'left' ? 'right' : 'left';
   }else if(wallPieces.includes(it)){
@@ -4716,7 +4787,30 @@ function showSelected(){
       el('div', {cls:'hint', text:`Footprint depth ${it.depth}mm`
         + (it.plinth ? ` · plinth ${it.plinth}mm` : '')
         + (it.overhead ? ' · overhead' : '')}),
-      btn('↻ Rotate 90°', () => { pushHistory(); setBoxRot(it, (it.rot ?? 0)+1); snapBox(it); showSelected(); requestDraw(); }),
+      btn('↻ Rotate 90°', () => { pushHistory(); setBoxRot(it, (it.rot ?? 0)+1); snapBox(it, {keepOrientation:true}); showSelected(); requestDraw(); }),
+      lockBtn(it), delBtn()
+    );
+  }else if(it.isBoxing){
+    info.append(
+      heading('Boxing'),
+      el('div', {cls:'hint', text:'A beam, bulkhead or pipe casing. Kitchen units '
+        + 'are allowed to sit inside it, so a clash shows the joiner where the '
+        + 'unit needs scribing or notching.'}),
+      readout('Status', boxWhere(it)),
+      numField('Length (mm)', it.width, v => { it.width = Math.max(50,v); anchorBox(it); settleBox(it); }, {min:50}),
+      numField('Depth (mm)', it.depth, v => { it.depth = Math.max(20,v); anchorBox(it); settleBox(it); }, {min:20}),
+      numField('Height (mm)', it.height, v => { it.height = Math.max(20,v); }, {min:20}),
+      numField('Height off floor (mm)', it.mountH ?? 0, v => { it.mountH = Math.max(0,v); }),
+      readout('Top at', fmtD((it.mountH ?? 0) + it.height)
+        + ((it.mountH ?? 0) + it.height > roomCeil ? ' — above the ceiling' : '')),
+      btn('↻ Rotate 90°', () => {
+        pushHistory(); setBoxRot(it, (it.rot ?? 0)+1); snapBox(it, {keepOrientation:true});
+        showSelected(); requestDraw();
+      }),
+      btn('Set full height', () => {
+        pushHistory(); it.mountH = 0; it.height = roomCeil;
+        showSelected(); requestDraw();
+      }),
       lockBtn(it), delBtn()
     );
   }else if(it.isRad){
@@ -4743,7 +4837,7 @@ function showSelected(){
       el('div', {cls:'hint', text:`${it.width} × ${it.height}mm, ${it.depth}mm deep. `
         + `Output is a guide only — check the maker's figures.`
         + ((it.mountH ?? 0) + it.height > roomCeil ? ' Currently taller than the ceiling.' : '')}),
-      btn('↻ Rotate 90°', () => { pushHistory(); setBoxRot(it, (it.rot ?? 0)+1); snapBox(it); showSelected(); requestDraw(); }),
+      btn('↻ Rotate 90°', () => { pushHistory(); setBoxRot(it, (it.rot ?? 0)+1); snapBox(it, {keepOrientation:true}); showSelected(); requestDraw(); }),
       lockBtn(it), delBtn()
     );
   }else if(furniture.includes(it)){
@@ -4755,7 +4849,7 @@ function showSelected(){
       numField('Height (mm)', it.height, v => { it.height = Math.max(50,v); }, {min:50}),
       numField('Height off floor (mm)', it.mountH ?? 0, v => { it.mountH = Math.max(0,v); }),
       el('div', {cls:'hint', text:'Footprint ' + fmtD(it.width) + ' × ' + fmtD(it.depth)}),
-      btn('↻ Rotate 90°', () => { pushHistory(); setBoxRot(it, (it.rot ?? 0)+1); snapBox(it); showSelected(); requestDraw(); }),
+      btn('↻ Rotate 90°', () => { pushHistory(); setBoxRot(it, (it.rot ?? 0)+1); snapBox(it, {keepOrientation:true}); showSelected(); requestDraw(); }),
       el('div', {}, [
         el('label', {text:'Snapping'}),
         btn(it.snapToWall ? 'Snaps to walls' : 'Ignores walls',
@@ -4877,7 +4971,7 @@ function computeSchedule(){
   // Furniture grouped by item. Radiators are listed separately below.
   const furnMap = new Map();
   for(const f of furniture){
-    if(f.isRad) continue;
+    if(f.isRad || f.isBoxing) continue;
     const key = f.fType + '|' + f.width + '|' + f.depth;
     const row = furnMap.get(key) || {label:f.label, width:f.width, depth:f.depth, count:0};
     row.count++;
@@ -4902,6 +4996,24 @@ function computeSchedule(){
   const rads = [...radMap.values()].sort((a,b) =>
     a.radType.localeCompare(b.radType) || a.width - b.width);
   const radTotal = rads.reduce((n,r) => n+r.count, 0);
+
+  // Boxing, and any kitchen unit running into it — the joiner's scribing list.
+  const boxings = furniture.filter(f => f.isBoxing);
+  const clashes = [];
+  for(const bx of boxings){
+    const bb = boxBB(bx);
+    const bxLo = bx.mountH ?? 0, bxHi = bxLo + bx.height;
+    for(const ku of kitchenUnits){
+      const kb = boxBB(ku);
+      const ox = Math.min(kb.x2, bb.x2) - Math.max(kb.x1, bb.x1);
+      const oy = Math.min(kb.y2, bb.y2) - Math.max(kb.y1, bb.y1);
+      if(ox <= 1 || oy <= 1) continue;                       // no overlap in plan
+      const kuLo = ku.mountH ?? 0, kuHi = kuLo + (ku.height ?? ku.totalH ?? 0);
+      if(kuHi <= bxLo + 1 || kuLo >= bxHi - 1) continue;      // clear in height
+      clashes.push({unit:ku.label, width:ku.width,
+                    depth:Math.round(Math.min(ox, oy)), overlapMm:Math.round(ox*oy)});
+    }
+  }
 
   // Sloped ceilings: how much floor has restricted headroom.
   let slopeAreaMm2 = 0, lowHeadAreaMm2 = 0, lowestCeil = roomCeil;
@@ -4957,6 +5069,7 @@ function computeSchedule(){
     netWallAreaMm2: Math.max(0, wallAreaMm2 - openingAreaMm2),
     units, unitTotal, worktopMm, furn, doors, windows, internalWallMm,
     fits, fitTotal, rads, radTotal, radWatts,
+    boxings, clashes,
     slopeCount:slopes.length, slopeAreaMm2, lowHeadAreaMm2, lowestCeil,
     standingAreaMm2: Math.max(0, areaMm2 - lowHeadAreaMm2),
     cost:{lines, grand}
@@ -5030,6 +5143,22 @@ function refreshSchedule(){
       s.furn.map(f => [f.label, f.width+'×'+f.depth, String(f.count)]),
       ['Total items', '', String(s.furn.reduce((n,f) => n+f.count, 0))]
     ));
+  }
+
+  if(s.boxings.length){
+    body.append(el('div', {cls:'divider'}));
+    body.append(heading('Boxing'));
+    body.append(table(['Size','Height','Off floor'],
+      s.boxings.map(b => [`${b.width}×${b.depth}`, b.height+'mm', (b.mountH ?? 0)+'mm'])));
+    if(s.clashes.length){
+      body.append(el('div', {cls:'hint', style:'color:#D9534F;',
+        text:`${s.clashes.length} unit${s.clashes.length === 1 ? '' : 's'} run into boxing `
+          + 'and will need scribing or notching:'}));
+      body.append(table(['Unit','Width','Into boxing'],
+        s.clashes.map(c => [c.unit, c.width+'mm', c.depth+'mm'])));
+    }else{
+      body.append(el('div', {cls:'hint', text:'No units clash with it.'}));
+    }
   }
 
   if(s.slopeCount){
@@ -5794,6 +5923,18 @@ function schedulePage(){
     cols3('Item', 'Size', 'Qty', true);
     for(const f of s.furn) cols3(f.label, f.width+'x'+f.depth, String(f.count));
     cols3('Total', '', String(s.furn.reduce((n,f) => n+f.count, 0)), true);
+    gap();
+  }
+
+  if(s.boxings.length){
+    sectionTitle('Boxing');
+    cols3('Size', 'Height', 'Off floor', true);
+    for(const b of s.boxings) cols3(`${b.width}x${b.depth}`, b.height+'mm', (b.mountH ?? 0)+'mm');
+    if(s.clashes.length){
+      gap();
+      cols3('Unit to scribe', 'Width', 'Into boxing', true);
+      for(const c of s.clashes) cols3(c.unit, c.width+'mm', c.depth+'mm');
+    }
     gap();
   }
 

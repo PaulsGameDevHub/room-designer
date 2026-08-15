@@ -65,6 +65,18 @@ in red and labelled with the overshoot. Both heights can be set by clicking them
 Elevation as well as in the sidebar. The schedule reports the area under boxing, the
 lowest clear height, and how much floor keeps full headroom.
 
+**Boxing** — a run of casing hiding a beam, a soil stack or pipework. One click adds
+a 1000 × 100mm piece the size of a wall stub, full height from floor to ceiling, and
+it rotates in 90° steps. Length, depth, height and height off the floor are all typed
+in, so the same tool covers a beam boxed along the ceiling (height 200, off the floor
+2200) and pipes boxed up a corner (full height). It snaps to walls like anything else
+and is drawn hatched in plan.
+
+Kitchen units deliberately **ignore** boxing: a unit may sit inside it and gap
+dimensions measure straight past it, because the point is to show the carpenter where
+a carcass has to be scribed or cut. The schedule lists each piece of boxing and, under
+it, every unit that clashes with how far into it each one runs.
+
 **Radiators** — Type 11 single panel, Type 21 single plus, Type 22 double panel and
 towel rails. Panel depth follows the type (60 / 80 / 100mm), which matters in plan
 because a double panel stands noticeably further into the room. Standard lengths from

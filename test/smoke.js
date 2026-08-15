@@ -129,6 +129,7 @@ const exposed = `
   get fittings(){return fittings}, addFitting, snapToSurface, fittingCorners,
   ptInFitting, fittingBB, drawFittings, FITTING_SPECS, pointInPoly,
   addRadiator, radOutput, RAD_SPECS, RAD_MOUNT_H, RAD_DEFAULTS,
+  addBoxing, BOXING_DEFAULTS,
   get dimHitAreas(){return dimHitAreas}, openDim, confirmDim, hitTest,
   get slopes(){return slopes}, addSlope, slopeBB, ptInSlope, clearHeightAt,
   slopeCrossing, elevClearHeightAt, elevHasSlope, HEADROOM_MM, SLOPE_DEFAULTS,
@@ -1219,6 +1220,145 @@ check('a tall unit under the low end is flagged in elevation', () => {
   return unit.z2 > ceil
     ? `a ${unit.z2}mm unit under a ${ceil.toFixed(0)}mm ceiling — ${Math.round(unit.z2-ceil)}mm too tall`
     : fail(`unit top ${unit.z2} vs ceiling ${ceil}, expected a clash to flag`);
+});
+
+// ── Boxing ───────────────────────────────────────────────────────────────────
+function dropBoxing(cx, cy, opts){
+  api.addBoxing();
+  const b = api.furniture[api.furniture.length-1];
+  Object.assign(b, opts || {});
+  b.cx = cx; b.cy = cy;
+  api.snapBox(b);
+  return b;
+}
+
+check('one click adds full-height boxing the size of a wall piece', () => {
+  emptyRoom();
+  api.addBoxing();
+  const b = api.furniture[0];
+  const bad = [];
+  if(!b.isBoxing) bad.push('isBoxing not set');
+  if(b.width !== 1000) bad.push(`length ${b.width}, expected 1000`);
+  if(b.depth !== 100) bad.push(`depth ${b.depth}, expected 100`);
+  if(b.height !== api.roomCeil) bad.push(`height ${b.height}, expected ${api.roomCeil}`);
+  if(b.mountH !== 0) bad.push(`off floor ${b.mountH}, expected 0`);
+  if(api.selectedItem !== b) bad.push('not left selected');
+  return bad.length ? fail(bad.join('; '))
+    : `${b.width}×${b.depth}mm, full ${b.height}mm height from the floor, selected`;
+});
+
+check('boxing snaps to a wall and rotates', () => {
+  emptyRoom();
+  const b = dropBoxing(3000, 200);
+  if(!b.snapped || b.snappedFace !== 'top') return fail(`snapped=${b.snapped} face=${b.snappedFace}`);
+  const before = api.boxBB(b);
+  api.setBoxRot(b, (b.rot ?? 0)+1);
+  api.snapBox(b, {keepOrientation:true});
+  const after = api.boxBB(b);
+  const swapped = Math.abs((after.y2-after.y1) - (before.x2-before.x1)) < 0.001;
+  return swapped
+    ? `snapped to the top wall, then turned to run ${Math.round(after.y2-after.y1)}mm up the wall`
+    : fail(`spans ${before.x2-before.x1}×${before.y2-before.y1} became ${after.x2-after.x1}×${after.y2-after.y1}`);
+});
+
+check('turning a wall-snapped kitchen unit actually turns it', () => {
+  // Without keepOrientation the re-snap picks the same wall back and the turn is
+  // silently lost. This is the ordinary Rotate button, not a boxing quirk.
+  emptyRoom();
+  const ku = dropUnit(600, 3000, 250);          // against the top wall
+  if(ku.snappedFace !== 'top') return fail(`landed on the ${ku.snappedFace} wall`);
+  const before = api.boxBB(ku);
+  api.selectedItem = ku;
+  api.rotateSelected();                         // exactly what the button does
+  const after = api.boxBB(ku);
+  const beforeSpan = [before.x2-before.x1, before.y2-before.y1];
+  const afterSpan = [after.x2-after.x1, after.y2-after.y1];
+  return Math.abs(afterSpan[0]-beforeSpan[1]) < 0.001 && Math.abs(afterSpan[1]-beforeSpan[0]) < 0.001
+    ? `${beforeSpan.join('×')} became ${afterSpan.join('×')} (it leaves the wall, being turned side-on to it)`
+    : fail(`${beforeSpan.join('×')} stayed ${afterSpan.join('×')} — the turn was undone by the re-snap`);
+});
+
+check('a kitchen unit may sit inside boxing rather than being pushed off', () => {
+  emptyRoom();
+  const bx = dropBoxing(2000, 200);            // on the top wall
+  const ku = dropUnit(600, 2000, 250);          // dropped right on top of it
+  const bb = api.boxBB(bx), kb = api.boxBB(ku);
+  const ox = Math.min(kb.x2, bb.x2) - Math.max(kb.x1, bb.x1);
+  const oy = Math.min(kb.y2, bb.y2) - Math.max(kb.y1, bb.y1);
+  if(!(ox > 1 && oy > 1))
+    return fail(`the unit was moved clear — overlap ${Math.round(ox)}×${Math.round(oy)}`);
+  return `unit overlaps the boxing by ${Math.round(ox)}×${Math.round(oy)}mm, as intended`;
+});
+
+check('two kitchen units still refuse to overlap each other', () => {
+  // The boxing exemption must not have loosened the ordinary rule.
+  emptyRoom();
+  dropBoxing(2000, 200);
+  const a = dropUnit(600, 4000, 250);
+  const b = dropUnit(600, 4200, 250);
+  const ab = api.boxBB(a), bb = api.boxBB(b);
+  const ox = Math.min(ab.x2, bb.x2) - Math.max(ab.x1, bb.x1);
+  return ox <= 0.001
+    ? `still pushed apart, meeting at x=${ab.x2}`
+    : fail(`units overlap by ${Math.round(ox)}mm`);
+});
+
+check('boxing is not counted as an obstacle by gap dimensions', () => {
+  emptyRoom();
+  dropBoxing(3000, 200);                        // sits mid-wall
+  const ku = dropUnit(600, 1000, 250);
+  const near = api.boxNearestObjects(ku, api.boxBB(ku));
+  // Without the exemption the gap would stop at the boxing edge of 2500.
+  return Math.abs(near.nearHi - api.roomW) < 1
+    ? `gap runs the full ${near.gapHi}mm to the far wall, straight past the boxing`
+    : fail(`gap stopped at x=${Math.round(near.nearHi)}, expected the wall at ${api.roomW}`);
+});
+
+check('the schedule lists boxing and the units that clash with it', () => {
+  emptyRoom();
+  dropBoxing(2000, 200);
+  dropUnit(600, 2000, 250);                     // clashes
+  dropUnit(600, 6000, 250);                     // clear of it
+  const s = api.computeSchedule();
+  if(s.boxings.length !== 1) return fail(`${s.boxings.length} boxing rows`);
+  if(s.clashes.length !== 1) return fail(`${s.clashes.length} clashes, expected 1`);
+  if(s.furn.some(f => /boxing/i.test(f.label)))
+    return fail('boxing leaked into the furniture list');
+  return `1 boxing listed, ${s.clashes.length} unit to scribe `
+    + `(${s.clashes[0].unit}, ${s.clashes[0].depth}mm into it)`;
+});
+
+check('a unit clear of the boxing in height is not called a clash', () => {
+  emptyRoom();
+  // A ceiling beam: 300 deep, sitting high up out of the way of a base unit.
+  dropBoxing(2000, 200, {height:300, mountH:2100});
+  dropUnit(600, 2000, 250);                     // 870 tall, passes underneath
+  const s = api.computeSchedule();
+  return s.clashes.length === 0
+    ? 'a beam at 2100 does not clash with an 870mm base unit below it'
+    : fail(`${s.clashes.length} clash reported against a beam well above the unit`);
+});
+
+check('boxing survives save and load and draws everywhere', () => {
+  emptyRoom();
+  dropBoxing(2000, 200, {height:400, mountH:2000});
+  const before = api.furniture.filter(f => f.isBoxing)
+    .map(b => [b.width, b.depth, b.height, b.mountH].join(','));
+  api.applySnapshot(JSON.parse(JSON.stringify(api.roomData())));
+  const after = api.furniture.filter(f => f.isBoxing)
+    .map(b => [b.width, b.depth, b.height, b.mountH].join(','));
+  if(before.join('|') !== after.join('|')) return fail(`${before} became ${after}`);
+  api.drawPlan();
+  document.getElementById('elev-wall').value = 'top';
+  const items = api.elevItems(api.elevInfo()).filter(i => i.obj && i.obj.isBoxing);
+  if(items.length !== 1) return fail(`${items.length} boxing items in the elevation`);
+  if(Math.abs(items[0].z1 - 2000) > 0.001 || Math.abs(items[0].z2 - 2400) > 0.001)
+    return fail(`elevation spans ${items[0].z1}-${items[0].z2}, expected 2000-2400`);
+  api.setView('elev'); api.drawElevation(); api.setView('plan');
+  const p = api.planPage(50);
+  return p.content.length
+    ? `kept ${after[0]}, drawn in plan, at ${items[0].z1}-${items[0].z2} in elevation, and in the PDF`
+    : fail('the PDF produced no content');
 });
 
 // ── Radiators ────────────────────────────────────────────────────────────────
