@@ -275,7 +275,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-15 15:19';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-15 19:09';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -3441,12 +3441,15 @@ const FLOOR_DEFAULTS = {
   minUse: 300,        // shorter offcuts than this get thrown away, not started with
   minStagger: 300,    // end joints in touching rows never come closer than this
   // Two rows apart, which is the H pattern. Not a published figure like the one
-  // above — manufacturers say to avoid H-joints without giving a number — so this
-  // was measured rather than guessed: swept from 0 to 310mm over six rooms and
-  // all three stagger settings, 200mm gives the fewest rows marching in step
-  // (20% at worst, against 27% at 150 and 69% at 300, where a third-plank start
-  // gets squeezed into a staircase). It costs about one plank in 250.
-  minStaggerH: 200,
+  // above — manufacturers say to avoid H-joints without giving a number — so it
+  // was measured: swept from 0 to 310mm over six rooms and all three stagger
+  // settings, 300mm leaves the fewest rows marching in step, 19% at worst against
+  // 33% at 200 and 40% at 150, and delivers more clearance for the same planks.
+  //
+  // An earlier sweep put the best at 200. That was measured before offcuts had to
+  // respect which end was sawn, so it was measuring a floor that could not be
+  // laid; which offcuts are available is exactly what decides where a row starts.
+  minStaggerH: 300,
   waste: 10,          // extra % on the area figure, for damage and mistakes
 };
 const FLOOR_COLOR = '#B98B4E';
@@ -3707,8 +3710,26 @@ function layFloor(f){
   // dragging the origin slides the pattern rather than re-laying it.
   const first = acrossLo - mod(acrossLo - origin, wid);
   const rows = [];
-  let carry = 0;                 // usable offcut left over from the row before
+  // Offcuts come in two kinds and they are not interchangeable. Cut a plank and
+  // one end is sawn and one is still the factory tongue; a plank cannot be turned
+  // end for end to swap them, because that would put the long edge's tongue on
+  // the wrong side. So a sawn end can only ever face a wall or an obstacle, never
+  // another plank — two sawn ends will not join at all.
+  //
+  //   endStock   factory | ---- | sawn      finishes a run, sawn end to the wall
+  //   startStock    sawn | ---- | factory   begins a run, sawn end to the wall
+  //
+  // Cutting the last piece of a run leaves a startStock, which is exactly why
+  // "start the next row with the offcut" is the standard way to lay a floor.
+  // Cutting the first piece of a run leaves the other kind, good only for
+  // finishing one. Cutting either kind down again leaves a piece sawn at both
+  // ends, which is scrap.
+  let startStock = 0, endStock = 0;
   let planksUsed = 0, cuts = 0, binnedMm = 0;
+  const stash = (cur, add) => {          // one of each kind is kept, the longer
+    if(add < cur){ binnedMm += add; return cur; }
+    binnedMm += cur; return add;
+  };
   // End joints in touching rows have to keep their distance — 300mm is the usual
   // rule. Without it the offcut pattern happily stacks one joint straight on top
   // of another, which is the one thing a laminate floor must not do.
@@ -3736,7 +3757,7 @@ function layFloor(f){
     // re-laying it from scratch.
     const rowOffset = f.stagger === 'half'  ? (i % 2) * len/2
                     : f.stagger === 'third' ? (i % 3) * len/3
-                    : (carry >= f.minUse ? carry : 0);
+                    : (startStock >= f.minUse ? startStock : 0);
     // The stagger rules override all three patterns — they are how a floor has to
     // be laid, not a preference. A strict half plank is the worst offender: it
     // puts every joint back over the one two rows up.
@@ -3754,24 +3775,36 @@ function layFloor(f){
         }
         const end = Math.min(a + pieceLen, rHi);
         const need = end - a;
+        // Which ends of this piece are free. A free end may be sawn; an end that
+        // meets another plank must be a factory one.
+        const atStart = a <= rLo + 1e-6;
+        const atEnd = end >= rHi - 1e-6;
         // A usable offcut is laid instead of opening a new plank — which is the
-        // whole reason the plank count is not simply area divided by plank size.
-        const useCarry = carry >= f.minUse && carry >= need - 1e-6;
-        if(useCarry){
-          const left = carry - need;
-          if(left >= f.minUse) carry = left;
-          else { binnedMm += left; carry = 0; }
+        // whole reason the plank count is not simply area divided by plank size —
+        // but only where its sawn end has a wall to face.
+        let from = null;
+        if(atStart && startStock >= Math.max(need, f.minUse) - 1e-6) from = 'start';
+        else if(atEnd && endStock >= Math.max(need, f.minUse) - 1e-6) from = 'end';
+        if(from){
+          // Trimming a stock piece to length leaves one sawn at both ends: scrap.
+          const left = (from === 'start' ? startStock : endStock) - need;
+          if(from === 'start') startStock = 0; else endStock = 0;
+          binnedMm += left;
           if(need < len - 1e-6) cuts++;
         }else{
           planksUsed++;
           if(need < len - 1e-6){
             cuts++;
             const off = len - need;
-            if(off >= f.minUse){ binnedMm += carry; carry = off; }
-            else binnedMm += off;
+            if(off >= f.minUse){
+              // A piece that only has to be factory on its right leaves the left
+              // half over, and that is the kind that can only finish a run.
+              if(atStart && !atEnd) endStock = stash(endStock, off);
+              else startStock = stash(startStock, off);
+            }else binnedMm += off;
           }
         }
-        planks.push({a0:a, a1:end, cLo, cHi, cut:need < len - 1e-6, carried:useCarry});
+        planks.push({a0:a, a1:end, cLo, cHi, cut:need < len - 1e-6, carried:!!from, from});
         a = end;
       }
     }

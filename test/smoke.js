@@ -1772,6 +1772,66 @@ check('joints in touching rows are never closer than 300mm', () => {
     : fail(`${Math.round(worst)}mm apart — ${worstAt}`);
 });
 
+// Split a row into runs: a break is wherever one plank does not continue the last.
+function rowRunsOf(row){
+  const runs = [];
+  for(const p of row.planks){
+    const last = runs[runs.length-1];
+    if(last && Math.abs(last[last.length-1].a1 - p.a0) < 1e-6) last.push(p);
+    else runs.push([p]);
+  }
+  return runs;
+}
+
+check('a reused offcut never puts its sawn end against another plank', () => {
+  // Cut a plank and one end is sawn, one is still the factory tongue, and it
+  // cannot be turned end for end to swap them — that would put the long edge's
+  // tongue on the wrong side. So the sawn end can only face a wall or an
+  // obstacle: two sawn ends will not join at all. An offcut off the end of a row
+  // begins the next one; an offcut off the start of a row can only finish one.
+  //
+  // Before this was modelled, 35 reuses across these rooms butted a sawn end
+  // against a plank, so the plank counts were optimistic.
+  const rooms = [[4200,3000],[4780,3160],[4000,2000],[4500,2000],[5000,4000],[8220,5050],[6100,3050]];
+  let reused = 0, beginning = 0, finishing = 0;
+  for(const [w,h] of rooms){
+    const lay = api.layFloor(layIn(w, h, {plankLen:1220, plankWid:190, gap:10}));
+    for(const row of lay.rows){
+      for(const run of rowRunsOf(row)){
+        for(let i=0; i<run.length; i++){
+          const p = run[i];
+          if(!p.from) continue;
+          reused++;
+          // A start-stock piece is sawn on its left, so its left end must be free;
+          // an end-stock piece is sawn on its right, so its right end must be.
+          if(p.from === 'start'){
+            if(i !== 0) return fail(`a start offcut sat ${i} planks into a run in ${w}x${h}`);
+            beginning++;
+          }else{
+            if(i !== run.length-1) return fail(`an end offcut sat mid-run in ${w}x${h}`);
+            finishing++;
+          }
+        }
+      }
+    }
+  }
+  return reused > 0 && beginning > 0 && finishing > 0
+    ? `${reused} offcuts reused across 7 rooms — ${beginning} beginning a run, ${finishing} finishing one, none butted sawn-to-plank`
+    : fail(`${reused} reused (${beginning} beginning, ${finishing} finishing) — the two kinds are not both in play`);
+});
+
+check('an offcut is only ever cut from the end that keeps its factory joint', () => {
+  // The lengths have to add up as well as the orientations: a plank cut to fit
+  // leaves exactly the rest of that plank, and a stock piece trimmed down leaves
+  // a piece sawn at both ends, which is scrap and cannot come back.
+  const f = layIn(4780, 3160, {plankLen:1220, plankWid:190, gap:10});
+  const t = api.floorTotals(f);
+  const bought = t.planksUsed * 1220 * 190;
+  return Math.abs(bought - t.boughtMm2) < 1 && t.netMm2 <= t.boughtMm2 + 1
+    ? `${t.planksUsed} planks bought covering ${(t.netMm2/1e6).toFixed(2)}m², nothing conjured out of scrap`
+    : fail(`bought ${t.boughtMm2}, laid ${t.netMm2}`);
+});
+
 check('no joint ever lands back on one two rows up — no H pattern', () => {
   // This is the failure the reference picture calls out. Before the rule went in,
   // a strict half plank produced 162 exact H-joints in an 8220x5050 room, and the

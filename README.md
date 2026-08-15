@@ -77,6 +77,23 @@ a fitter actually does, and it is why the direction and the starting point chang
 total — the same room can want two or three planks more or fewer depending on how it
 is set out.
 
+**Offcuts come in two kinds and they are not interchangeable.** Cut a plank and one end
+is sawn while the other is still the factory tongue, and it cannot be turned end for end
+to swap them — that would put the long edge's tongue on the wrong side. So a sawn end
+can only ever face a wall or an obstacle, never another plank; two sawn ends will not
+join at all.
+
+```
+end stock     factory | ---- | sawn      can only finish a run
+start stock      sawn | ---- | factory   can only begin a run
+```
+
+Cutting the last piece of a run leaves a start stock, which is exactly why *start the
+next row with the offcut* is the standard way to lay a floor. Cutting the first piece of
+a run leaves the other kind, good only for finishing one. Trimming either kind down
+again leaves a piece sawn at both ends, which is scrap. All of this is modelled, because
+which offcuts are available is what decides where each row can start.
+
 ### How the rows are staggered
 
 Two things have to be avoided, and they pull against each other.
@@ -100,13 +117,13 @@ start**, not a promise about the geometry; the rules always have the final say. 
 schedule reports the closest joint in touching rows and two rows up, so both can be
 checked rather than taken on trust, and both minimums are editable.
 
-The 300mm figure is published; the 200mm two rows up is not — manufacturers say to
-avoid H-joints without giving a number. It was measured rather than guessed: swept from
-0 to 310mm across six rooms and all three stagger settings, 200mm leaves the fewest rows
-marching in step (20% at worst, against 27% at 150mm and 69% at 300mm, where a
-third-plank start gets squeezed into a staircase). It costs about one plank in 250.
-Asking for more than the lattice can deliver eases the rule rather than abandoning it,
-because dropping it brings back the very H-joints it exists to prevent.
+The 300mm between touching rows is published; the 300mm two rows up is not —
+manufacturers say to avoid H-joints without giving a number. That one was measured
+rather than guessed: swept from 0 to 310mm across six rooms and all three stagger
+settings, it leaves the fewest rows marching in step (19% at worst, against 33% at 200mm
+and 40% at 150mm) for the same plank count. Asking for more than the lattice can deliver
+eases the rule rather than abandoning it, because dropping it brings back the very
+H-joints it exists to prevent.
 
 Joints sit on a lattice one plank long, so they can never be more than **half a plank**
 apart in touching rows, nor more than **a third** across three rows at once — a 300mm
