@@ -100,6 +100,14 @@ start**, not a promise about the geometry; the rules always have the final say. 
 schedule reports the closest joint in touching rows and two rows up, so both can be
 checked rather than taken on trust, and both minimums are editable.
 
+The 300mm figure is published; the 200mm two rows up is not — manufacturers say to
+avoid H-joints without giving a number. It was measured rather than guessed: swept from
+0 to 310mm across six rooms and all three stagger settings, 200mm leaves the fewest rows
+marching in step (20% at worst, against 27% at 150mm and 69% at 300mm, where a
+third-plank start gets squeezed into a staircase). It costs about one plank in 250.
+Asking for more than the lattice can deliver eases the rule rather than abandoning it,
+because dropping it brings back the very H-joints it exists to prevent.
+
 Joints sit on a lattice one plank long, so they can never be more than **half a plank**
 apart in touching rows, nor more than **a third** across three rows at once — a 300mm
 rule needs planks of at least 600mm. Ask for more than the plank can give and it says

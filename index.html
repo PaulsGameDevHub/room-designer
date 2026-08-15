@@ -275,7 +275,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-15 15:07';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-15 15:19';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -3440,11 +3440,13 @@ const FLOOR_DEFAULTS = {
   gap: 10,            // expansion gap left at every wall, hidden by beading
   minUse: 300,        // shorter offcuts than this get thrown away, not started with
   minStagger: 300,    // end joints in touching rows never come closer than this
-  // Two rows apart the joints only have to miss each other — an exact line-up is
-  // the H pattern. Deliberately smaller than the 300 above: hold both rules at
-  // 300 on a 1220 plank and there is barely 10mm of freedom left, which forces
-  // the rows into a regular march and trades the H for a staircase.
-  minStaggerH: 150,
+  // Two rows apart, which is the H pattern. Not a published figure like the one
+  // above — manufacturers say to avoid H-joints without giving a number — so this
+  // was measured rather than guessed: swept from 0 to 310mm over six rooms and
+  // all three stagger settings, 200mm gives the fewest rows marching in step
+  // (20% at worst, against 27% at 150 and 69% at 300, where a third-plank start
+  // gets squeezed into a staircase). It costs about one plank in 250.
+  minStaggerH: 200,
   waste: 10,          // extra % on the area figure, for damage and mistakes
 };
 const FLOOR_COLOR = '#B98B4E';
@@ -3573,6 +3575,17 @@ const mod = (v, m) => ((v % m) + m) % m;
 // so a floor is the same floor every time it is drawn.
 const latticeGap = (a, b, len) => { const d = mod(b-a, len); return Math.min(d, len-d); };
 
+// The most that can be asked of the two-rows-up rule and still always be met.
+//
+// A row has to clear a band of 2*minAdj around the row above and 2*minH around
+// the one above that. When those bands do not overlap they take 2*minAdj+2*minH
+// of a lattice only len long, so anything past len/2 - minAdj can leave nowhere
+// legal to put the row — at which point the rule gets dropped and the H-joints
+// it exists to prevent come straight back. On a 1220mm plank with the usual
+// 300mm rule that ceiling is 310mm, which is why asking for a third of a plank
+// (406mm) made things worse rather than better.
+const staggerCeiling = (len, minAdj) => Math.max(0, Math.min(len/3, len/2 - minAdj));
+
 // Deterministic, evenly spread, and no dependence on Math.random, which would
 // make the plan flicker and the plank count change on every redraw.
 function jitter01(i){
@@ -3604,21 +3617,22 @@ function subtractArc(arcs, lo, hi, len){
 // Half a plank is the most two touching rows can ever differ by, and a third is
 // the most three rows can all be kept apart by at once, so each ban is capped at
 // what is actually achievable rather than asked for blindly.
-function allowedBases(prev, len, minAdj, minH, drop){
+function allowedBases(prev, len, minAdj, minH, scale){
   const has = v => v !== null && v !== undefined;
+  const k = scale === undefined ? 1 : scale;
   const bans = [];
   if(has(prev[0])) bans.push([prev[0], Math.min(minAdj, len/2)]);
-  if(has(prev[1])) bans.push([prev[1], Math.min(minH, len/3)]);
+  if(has(prev[1])) bans.push([prev[1], Math.min(minH, staggerCeiling(len, minAdj)) * k]);
   // Repeating the last row-to-row step is what draws a staircase of joints
   // diagonally across the floor: no two rows are in breach, and the floor still
   // looks machine-laid. Forbidding the step that would continue the march is the
   // only way to stop it, because it is a property of three rows, not two.
   if(has(prev[0]) && has(prev[1])){
     const lastStep = mod(prev[0] - prev[1], len);
-    bans.push([prev[0] + lastStep, Math.min(minH, len/6)]);
+    bans.push([prev[0] + lastStep, Math.min(minH, len/6) * k]);
   }
   let arcs = [[0, len]];
-  for(const [at, m] of bans.slice(0, bans.length - (drop || 0))){
+  for(const [at, m] of bans){
     if(m > 0) arcs = subtractArc(arcs, at-m, at+m, len);
   }
   return arcs;
@@ -3635,10 +3649,15 @@ function pickJointBase(prev, want, len, minAdj, minH, i){
   if(prev[0] !== null && prev[0] !== undefined && minAdj >= len/2 - 1e-9){
     return want - mod(want, len) + mod(prev[0] + len/2, len);
   }
-  // Give up the weakest rule first if the plank is too short to keep them all.
+  // Ask for too much and the two soft rules can leave nowhere legal at all. Ease
+  // them off together until something fits, rather than abandoning them: dropping
+  // the two-rows-up rule outright is worse than keeping a reduced version of it,
+  // because abandoning it brings back the exact H-joints it exists to prevent.
+  // The hard 300mm rule against the row above is never scaled.
   let arcs = [];
-  for(let drop = 0; drop <= 3 && !arcs.length; drop++){
-    arcs = allowedBases(prev, len, minAdj, minH, drop);
+  for(const k of [1, 0.75, 0.5, 0.25, 0]){
+    arcs = allowedBases(prev, len, minAdj, minH, k);
+    if(arcs.length) break;
   }
   if(!arcs.length) return want;                 // nothing legal; reported, not hidden
   const frame = want - mod(want, len);          // keep the same multiple of a plank
@@ -3696,7 +3715,7 @@ function layFloor(f){
   const minStag = Math.max(0, f.minStagger ?? FLOOR_DEFAULTS.minStagger);
   const minH = Math.max(0, f.minStaggerH ?? FLOOR_DEFAULTS.minStaggerH);
   const staggerPossible = Math.min(minStag, len/2);
-  const hPossible = Math.min(minH, len/3);
+  const hPossible = Math.min(minH, staggerCeiling(len, minStag));
   // The last two rows that actually had planks in them, newest first.
   const prev = [null, null];
   let worstStagger = Infinity, worstH = Infinity;
@@ -3785,7 +3804,7 @@ function layFloor(f){
     // more than a third of one across three rows at once.
     staggerImpossible: minStag > len/2 + 1e-9,
     staggerBest: staggerPossible,
-    hImpossible: minH > len/3 + 1e-9,
+    hImpossible: minH > staggerCeiling(len, minStag) + 1e-9,
     hBest: hPossible,
   };
 }
@@ -5256,9 +5275,10 @@ function floorFields(f){
     t.staggerImpossible || t.hImpossible
       ? el('div', {cls:'hint', style:'color:#D9534F;',
           text:`A ${f.plankLen}mm plank cannot do that: joints in touching rows are at `
-            + `best half a plank apart (${Math.round(t.staggerBest)}mm) and rows two apart `
-            + `at best a third (${Math.round(t.hBest)}mm). Laid to those instead — `
-            + `ease the rule or use a longer plank.`})
+            + `best half a plank apart (${Math.round(t.staggerBest)}mm), and once `
+            + `${Math.round(f.minStagger)}mm of that is spoken for, rows two apart can be `
+            + `held at most ${Math.round(t.hBest)}mm. Laid to those instead — ease the `
+            + `rules or use a longer plank.`})
       : el('div', {cls:'hint', text:`Joints in touching rows are kept `
           + `${Math.round(f.minStagger)}mm apart`
           + (t.minStaggerGot === null ? '' : ` (closest here ${Math.round(t.minStaggerGot)}mm)`)

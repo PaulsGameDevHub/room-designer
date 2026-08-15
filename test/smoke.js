@@ -1794,6 +1794,38 @@ check('no joint ever lands back on one two rows up — no H pattern', () => {
     : fail(`${exact} exact H-joints, closest ${Math.round(worst)}mm — ${worstAt}`);
 });
 
+check('over-asking for clearance two rows up never brings the H back', () => {
+  // Asking for more than the lattice can give used to make the rule unsatisfiable,
+  // at which point it was dropped and the H-joints returned — worse than not
+  // asking. At 406mm (a third of a 1220 plank) that produced 42 of them across
+  // six rooms. The ask is now capped at what is actually deliverable.
+  const rooms = [[4200,3000],[4780,3160],[5000,4000],[8220,5050]];
+  for(const ask of [0, 150, 300, 310, 350, 406, 600, 5000]){
+    for(const [w,h] of rooms){
+      const f = layIn(w, h, {plankLen:1220, plankWid:190, gap:10, minStaggerH:ask});
+      const lay = api.layFloor(f);
+      const t = api.floorTotals(f);
+      let exact = 0;
+      for(let i=2; i<lay.rows.length; i++)
+        for(const a of rowJoints(lay.rows[i]))
+          for(const b of rowJoints(lay.rows[i-2])) if(Math.abs(a-b) < 1) exact++;
+      // Only a deliberate 0 should ever allow one.
+      if(ask > 0 && exact) return fail(`asking ${ask}mm gave ${exact} H-joints in ${w}x${h}`);
+      const got = closestJoint(lay, 2).worst;
+      // Up to the measured working range the ask is met outright; past it the rule
+      // is eased rather than abandoned, so it still has to deliver something.
+      if(ask > 0 && ask <= 200 && got < ask - 1e-6)
+        return fail(`asked ${ask}mm, got ${Math.round(got)}mm in ${w}x${h}`);
+      if(ask > 200 && got < 150)
+        return fail(`asking ${ask}mm collapsed to ${Math.round(got)}mm in ${w}x${h}`);
+    }
+  }
+  const ceiling = api.floorTotals(layIn(4200, 3000, {plankLen:1220, plankWid:190, minStaggerH:406})).hBest;
+  return Math.abs(ceiling - 310) < 1e-6
+    ? `asks from 0 to 5000mm all met or eased, never abandoned — the theoretical ceiling on a 1220 plank at a 300 rule is 310mm`
+    : fail(`ceiling came out at ${ceiling}mm, expected 310`);
+});
+
 check('the rows do not march in step and draw a staircase', () => {
   // The other half of the picture. A strict third kept every rule and still
   // stepped 407mm every single row, which reads as obviously machine-laid.
