@@ -269,7 +269,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-15 12:58';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-15 13:27';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -774,6 +774,27 @@ function setBoxRot(b, rot){
   unsnapBox(b);
 }
 
+// Boxing has no front or back, so it turns like a wall piece rather than like a
+// unit: it keeps the wall it is against and pivots about the edge that touches
+// it, which is why two turns put it back exactly where it started. A unit turned
+// side-on to its wall is genuinely off that wall; a length of boxing turned
+// side-on is a stub running out from it, which is a thing joiners actually build.
+function rotateBoxing(b){
+  if(isAngled(b)) unsnapBox(b);            // a turn takes it off a splay, as elsewhere
+  b.horiz = !b.horiz;
+  // rot only has to agree with horiz here. It normally records which way the back
+  // faces, but boxing has no back — nothing draws a front line on it.
+  b.rot = b.horiz ? 0 : 1;
+  b.orientationLocked = true;
+  if(b.snapped && b.snappedFace){
+    anchorBox(b);                          // re-seats the touching edge on its wall
+    slideBoxClear(b, [alongAxisFor(b.snappedFace)]);
+  }else{
+    clampBoxToRoom(b);
+    slideBoxClear(b, ['x','y']);
+  }
+}
+
 function unsnapBox(b){
   b.snapped = false;
   b.snappedFace = null;
@@ -801,15 +822,22 @@ function snapBox(b, opts){
   // of other wall pieces, and the angled face of every corner. With no angled
   // corners about the first candidate always wins, as it did before.
   const hd = b.depth/2;
+  // A turned piece of boxing keeps its orientation for good, the way a turned wall
+  // piece does, so dragging it along a wall cannot quietly untwist it. It may then
+  // meet a wall end-on, so the reach to that wall is measured across whichever side
+  // actually faces it rather than always across the depth.
+  const locked = !!b.orientationLocked;
+  const halfToH = locked ? (b.horiz ? b.depth/2 : b.width/2) : hd;   // toward a horizontal wall
+  const halfToV = locked ? (b.horiz ? b.width/2 : b.depth/2) : hd;   // toward a vertical wall
   const candidates = [];
   for(const e of allSnapEdges(-1)){
     if(e.type === 'h'){
-      // Against a horizontal wall the box runs along X.
-      candidates.push({d:Math.abs(b.cy - hd - e.coord), coord:e.coord, face:'top',    horiz:true});
-      candidates.push({d:Math.abs(b.cy + hd - e.coord), coord:e.coord, face:'bottom', horiz:true});
+      // Against a horizontal wall the box runs along X, unless its orientation is locked.
+      candidates.push({d:Math.abs(b.cy - halfToH - e.coord), coord:e.coord, face:'top',    horiz:locked ? b.horiz : true});
+      candidates.push({d:Math.abs(b.cy + halfToH - e.coord), coord:e.coord, face:'bottom', horiz:locked ? b.horiz : true});
     }else{
-      candidates.push({d:Math.abs(b.cx - hd - e.coord), coord:e.coord, face:'left',  horiz:false});
-      candidates.push({d:Math.abs(b.cx + hd - e.coord), coord:e.coord, face:'right', horiz:false});
+      candidates.push({d:Math.abs(b.cx - halfToV - e.coord), coord:e.coord, face:'left',  horiz:locked ? b.horiz : false});
+      candidates.push({d:Math.abs(b.cx + halfToV - e.coord), coord:e.coord, face:'right', horiz:locked ? b.horiz : false});
     }
   }
   for(const c of corners){
@@ -837,6 +865,9 @@ function snapBox(b, opts){
       if(!placeBoxOnHyp(b, cand.corner, cand.t)) continue;
       // Flush contact reads as zero overlap, so this only rejects real burial.
       if(clearOfCorners(b, boxPolygon) && boxInsideRoom(b)){
+        // Along a splay the box lies at the wall's angle, so horiz no longer means
+        // anything and there is nothing left to hold on to.
+        b.orientationLocked = false;
         settleInRun(b);
         return;
       }
@@ -848,7 +879,7 @@ function snapBox(b, opts){
     b.angle = null;
     b.horiz = cand.horiz;
     b.snappedFace = cand.face;
-    b.rot = FACE_TO_ROT[cand.face];
+    b.rot = locked ? (b.horiz ? 0 : 1) : FACE_TO_ROT[cand.face];
     b.anchorWallCoord = cand.coord;
     b.snapped = true;
     anchorBox(b);
@@ -2213,7 +2244,16 @@ function drawBoxes(){
     const col = b.color;
 
     ctx.save();
-    if(b.overhead){
+    if(b.isBoxing){
+      // Boxing is a built structure, not a loose object, so it gets a solid,
+      // heavier outline whatever height it sits at — the hatch alone reads as a
+      // smear once a 100mm-deep piece is only a few pixels across.
+      ctx.strokeStyle = isDrag ? (b.snapped ? COL.sel : COL.drag) : isSel ? COL.sel : col;
+      ctx.lineWidth = isSel ? 3 : 2;
+      ctx.setLineDash([]);
+      ctx.lineJoin = 'miter';
+      ctx.fillStyle = col+'22';
+    }else if(b.overhead){
       // Anything mounted above worktop height is drawn dashed, as overhead.
       ctx.strokeStyle = col+'aa';
       ctx.lineWidth = isSel ? 2 : 1.5;
@@ -2229,22 +2269,26 @@ function drawBoxes(){
     // Outline: a plain rect when square to the room, the rotated footprint when
     // lying along an angled wall.
     const angled = isAngled(b);
-    ctx.beginPath();
-    if(angled){
-      const cp = boxCorners(b).map(p => toC(p.x, p.y));
-      ctx.moveTo(cp[0].x, cp[0].y);
-      for(let i=1; i<cp.length; i++) ctx.lineTo(cp[i].x, cp[i].y);
-      ctx.closePath();
-    }else{
-      ctx.rect(c1.x, c1.y, W, H);
-    }
+    const pathBox = () => {
+      ctx.beginPath();
+      if(angled){
+        const cp = boxCorners(b).map(p => toC(p.x, p.y));
+        ctx.moveTo(cp[0].x, cp[0].y);
+        for(let i=1; i<cp.length; i++) ctx.lineTo(cp[i].x, cp[i].y);
+        ctx.closePath();
+      }else{
+        ctx.rect(c1.x, c1.y, W, H);
+      }
+    };
+    pathBox();
     ctx.fill();
     // Boxing is hatched, so it never reads as a unit at a glance.
     if(b.isBoxing){
       ctx.save();
       ctx.clip();
-      ctx.strokeStyle = col+'88';
+      ctx.strokeStyle = col+'66';
       ctx.lineWidth = 0.8;
+      ctx.setLineDash([]);
       ctx.beginPath();
       const x1c = Math.min(c1.x, c2.x) - Math.abs(H), x2c = Math.max(c1.x, c2.x) + Math.abs(H);
       for(let x = x1c; x < x2c; x += 7){
@@ -2253,6 +2297,10 @@ function drawBoxes(){
       }
       ctx.stroke();
       ctx.restore();
+      // restore() puts the style back but not the path, and the hatch replaced it.
+      // Without this the outline stroke re-draws the hatch lines instead — outside
+      // the clip this time, which is why boxing used to read as a slanted smear.
+      pathBox();
     }
     ctx.stroke();
     ctx.setLineDash([]);
@@ -4506,6 +4554,8 @@ function rotateSelected(){
   pushHistory();
   if(corners.includes(it)){
     it.rot = (it.rot+1) % 4;
+  }else if(it.isBoxing){
+    rotateBoxing(it);
   }else if(kitchenUnits.includes(it) || furniture.includes(it)){
     setBoxRot(it, (it.rot ?? 0) + 1);
     snapBox(it, {keepOrientation:true});
@@ -4804,7 +4854,7 @@ function showSelected(){
       readout('Top at', fmtD((it.mountH ?? 0) + it.height)
         + ((it.mountH ?? 0) + it.height > roomCeil ? ' — above the ceiling' : '')),
       btn('↻ Rotate 90°', () => {
-        pushHistory(); setBoxRot(it, (it.rot ?? 0)+1); snapBox(it, {keepOrientation:true});
+        pushHistory(); rotateBoxing(it);
         showSelected(); requestDraw();
       }),
       btn('Set full height', () => {

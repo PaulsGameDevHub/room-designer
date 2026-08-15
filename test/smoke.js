@@ -10,17 +10,42 @@ const js = /<script>([\s\S]*)<\/script>/.exec(html)[1];
 
 // ── canvas 2d stub ─────────────────────────────────────────────────────────
 const drawCalls = {};
+// Every stroke records the style it was drawn with, so a test can assert how
+// something looks and not merely that it was drawn at all.
+const strokeLog = [];
+const STYLE = ['font','fillStyle','strokeStyle','lineWidth','textAlign','textBaseline','lineJoin','_dash'];
 function ctxStub(){
+  const stack = [];
   const c = {
     canvas:{width:0,height:0},
     font:'', fillStyle:'', strokeStyle:'', lineWidth:1, textAlign:'', textBaseline:'',
+    lineJoin:'', _dash:[],
     measureText: s => ({width: String(s).length * 5.5}),
   };
   for(const m of ['clearRect','fillRect','strokeRect','beginPath','moveTo','lineTo','arc','arcTo',
                   'closePath','fill','stroke','save','restore','translate','rotate','scale',
                   'setLineDash','roundRect','setTransform','clip','rect','fillText','bezierCurveTo',
                   'quadraticCurveTo','createLinearGradient','drawImage']){
-    c[m] = (...a) => { drawCalls[m] = (drawCalls[m]||0)+1; };
+    c[m] = (...a) => {
+      drawCalls[m] = (drawCalls[m]||0)+1;
+      if(m === 'setLineDash') c._dash = a[0] || [];
+      // A real context restores its style on restore(), and drawing code relies on
+      // that — the boxing outline is stroked with the style save() preserved while
+      // the hatch inside it used another. Without a stack the log reads the wrong one.
+      if(m === 'save') stack.push(STYLE.map(k => c[k]));
+      if(m === 'restore'){
+        const s = stack.pop();
+        if(s) STYLE.forEach((k,i) => { c[k] = s[i]; });
+      }
+      // Shape of the path being stroked, so a test can tell a box outline from the
+      // hatch lines inside it — they can otherwise carry the identical style.
+      if(m === 'beginPath'){ c._rects = 0; c._segs = 0; }
+      if(m === 'rect' || m === 'roundRect') c._rects++;
+      if(m === 'moveTo' || m === 'lineTo') c._segs++;
+      if(m === 'stroke') strokeLog.push({
+        strokeStyle:c.strokeStyle, lineWidth:c.lineWidth, dashed:(c._dash||[]).length > 0,
+        rects:c._rects||0, segs:c._segs||0});
+    };
   }
   return c;
 }
@@ -129,7 +154,7 @@ const exposed = `
   get fittings(){return fittings}, addFitting, snapToSurface, fittingCorners,
   ptInFitting, fittingBB, drawFittings, FITTING_SPECS, pointInPoly,
   addRadiator, radOutput, RAD_SPECS, RAD_MOUNT_H, RAD_DEFAULTS,
-  addBoxing, BOXING_DEFAULTS,
+  addBoxing, BOXING_DEFAULTS, BOXING_COLOR, rotateBoxing,
   get dimHitAreas(){return dimHitAreas}, openDim, confirmDim, hitTest,
   get slopes(){return slopes}, addSlope, slopeBB, ptInSlope, clearHeightAt,
   slopeCrossing, elevClearHeightAt, elevHasSlope, HEADROOM_MM, SLOPE_DEFAULTS,
@@ -1259,6 +1284,63 @@ check('boxing snaps to a wall and rotates', () => {
   return swapped
     ? `snapped to the top wall, then turned to run ${Math.round(after.y2-after.y1)}mm up the wall`
     : fail(`spans ${before.x2-before.x1}×${before.y2-before.y1} became ${after.x2-after.x1}×${after.y2-after.y1}`);
+});
+
+check('boxing turns like a wall piece, staying on its wall', () => {
+  // A unit turned side-on has genuinely left its wall. Boxing turned side-on is a
+  // stub running out from that wall, so it must keep touching it.
+  emptyRoom();
+  const b = dropBoxing(3000, 200);
+  if(b.snappedFace !== 'top') return fail(`landed on the ${b.snappedFace} wall`);
+  api.rotateBoxing(b);
+  const bb = api.boxBB(b);
+  if(!b.snapped || b.snappedFace !== 'top') return fail(`came off the wall: snapped=${b.snapped} face=${b.snappedFace}`);
+  if(Math.abs(bb.y1) > 0.001) return fail(`no longer touching the wall — top edge at y=${bb.y1}`);
+  return `now runs ${Math.round(bb.y2-bb.y1)}mm out from the top wall, still flush against it at y=0`;
+});
+
+check('turning boxing twice puts it back exactly', () => {
+  emptyRoom();
+  const b = dropBoxing(3000, 200);
+  const before = api.boxBB(b);
+  api.rotateBoxing(b);
+  api.rotateBoxing(b);
+  const after = api.boxBB(b);
+  const same = ['x1','y1','x2','y2'].every(k => Math.abs(after[k]-before[k]) < 0.001);
+  return same && b.snapped && b.snappedFace === 'top'
+    ? `back to ${Math.round(after.x1)},${Math.round(after.y1)}..${Math.round(after.x2)},${Math.round(after.y2)} on the top wall`
+    : fail(`started ${JSON.stringify(before)}, ended ${JSON.stringify(after)} face=${b.snappedFace}`);
+});
+
+check('dragging turned boxing along its wall does not untwist it', () => {
+  // Without the orientation lock the drag re-snaps and takes its orientation from
+  // the nearest wall, quietly undoing the turn.
+  emptyRoom();
+  const b = dropBoxing(3000, 200);
+  api.rotateBoxing(b);
+  b.cx = 5000;                    // slide it along the top wall
+  api.snapBox(b);
+  const bb = api.boxBB(b);
+  const stillUpright = (bb.y2-bb.y1) > (bb.x2-bb.x1);
+  return stillUpright && b.snapped && Math.abs(bb.y1) < 0.001
+    ? `moved to x=${Math.round(b.cx)} and stayed ${Math.round(bb.x2-bb.x1)}×${Math.round(bb.y2-bb.y1)}, still on the wall`
+    : fail(`became ${Math.round(bb.x2-bb.x1)}×${Math.round(bb.y2-bb.y1)} at y1=${bb.y1}, snapped=${b.snapped}`);
+});
+
+check('boxing gets a solid rectangular outline, not just hatching', () => {
+  // The outline must be a rectangle. Stroking the hatch a second time in the
+  // outline's colour looks nearly right in a style log but draws a slanted smear,
+  // because the hatch path replaces the rectangle and outlives the clip.
+  emptyRoom();
+  const b = dropBoxing(3000, 200, {mountH:2200, height:200});
+  api.selectedItem = null;        // otherwise it strokes in the selection colour
+  strokeLog.length = 0;
+  api.drawPlan();
+  const own = strokeLog.filter(s => s.strokeStyle === api.BOXING_COLOR);
+  const outline = own.find(s => !s.dashed && s.lineWidth >= 2 && s.rects === 1 && s.segs === 0);
+  return outline
+    ? `a single rectangle stroked solid at ${outline.lineWidth}px in ${api.BOXING_COLOR}`
+    : fail(`no rectangular outline — strokes in its colour: ${JSON.stringify(own)}`);
 });
 
 check('turning a wall-snapped kitchen unit actually turns it', () => {

@@ -66,11 +66,16 @@ Elevation as well as in the sidebar. The schedule reports the area under boxing,
 lowest clear height, and how much floor keeps full headroom.
 
 **Boxing** — a run of casing hiding a beam, a soil stack or pipework. One click adds
-a 1000 × 100mm piece the size of a wall stub, full height from floor to ceiling, and
-it rotates in 90° steps. Length, depth, height and height off the floor are all typed
-in, so the same tool covers a beam boxed along the ceiling (height 200, off the floor
-2200) and pipes boxed up a corner (full height). It snaps to walls like anything else
-and is drawn hatched in plan.
+a 1000 × 100mm piece the size of a wall stub, full height from floor to ceiling.
+Length, depth, height and height off the floor are all typed in, so the same tool
+covers a beam boxed along the ceiling (height 200, off the floor 2200) and pipes boxed
+up a corner (full height). It snaps to walls like anything else, and is drawn hatched
+inside a solid outline so it reads as built rather than placed.
+
+It **turns like a wall piece, not like a unit**: it keeps the wall it is against and
+pivots about the edge that touches it, so a length running along a wall becomes a stub
+running out from it, and two turns put it back exactly where it started. Once turned it
+keeps that orientation, so sliding it along the wall cannot untwist it.
 
 Kitchen units deliberately **ignore** boxing: a unit may sit inside it and gap
 dimensions measure straight past it, because the point is to show the carpenter where
