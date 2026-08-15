@@ -275,7 +275,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-15 14:40';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-15 14:51';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -3439,6 +3439,7 @@ const FLOOR_DEFAULTS = {
   plankLen: 1220, plankWid: 190, perBox: 8,
   gap: 10,            // expansion gap left at every wall, hidden by beading
   minUse: 300,        // shorter offcuts than this get thrown away, not started with
+  minStagger: 300,    // end joints in touching rows never come closer than this
   waste: 10,          // extra % on the area figure, for damage and mistakes
 };
 const FLOOR_COLOR = '#B98B4E';
@@ -3449,7 +3450,8 @@ function newFloor(){
     material:'Laminate',
     plankLen:FLOOR_DEFAULTS.plankLen, plankWid:FLOOR_DEFAULTS.plankWid,
     perBox:FLOOR_DEFAULTS.perBox, gap:FLOOR_DEFAULTS.gap,
-    minUse:FLOOR_DEFAULTS.minUse, waste:FLOOR_DEFAULTS.waste,
+    minUse:FLOOR_DEFAULTS.minUse, minStagger:FLOOR_DEFAULTS.minStagger,
+    waste:FLOOR_DEFAULTS.waste,
     horiz:roomW >= roomH,     // planks normally run the long way
     stagger:'offcut',
     ox:0, oy:0,               // pattern origin, dragged about by the user
@@ -3536,6 +3538,24 @@ const subtractSpans = (from, cut) => {
 
 const mod = (v, m) => ((v % m) + m) % m;
 
+// ── Minimum stagger between rows ───────────────────────────────────────────
+//
+// Every row's end joints sit on a lattice of pitch plankLen, so the whole
+// relationship between two touching rows is the offset between their lattices.
+// The closest any joint gets to one in the row below is min(d, len-d), which is
+// why half a plank is the best that can ever be achieved and a plank shorter
+// than twice the minimum cannot satisfy the rule at all.
+const latticeGap = (a, b, len) => { const d = mod(b-a, len); return Math.min(d, len-d); };
+
+// Move a row's joints to the nearest position that keeps the rule, leaving them
+// alone when they already do.
+function enforceStagger(prevBase, base, len, min){
+  const want = Math.min(min, len/2);        // no layout can beat half a plank
+  const d = mod(base - prevBase, len);
+  if(d >= want - 1e-9 && d <= len - want + 1e-9) return base;
+  return prevBase + (d < want ? want : len - want);
+}
+
 // The runs of a row that still need planking. A row is only skipped where an
 // obstacle covers its whole width — a unit poking halfway into a row still has
 // to be planked past and scribed, which is what a fitter would do.
@@ -3573,6 +3593,12 @@ function layFloor(f){
   const rows = [];
   let carry = 0;                 // usable offcut left over from the row before
   let planksUsed = 0, cuts = 0, binnedMm = 0;
+  // End joints in touching rows have to keep their distance — 300mm is the usual
+  // rule. Without it the offcut pattern happily stacks one joint straight on top
+  // of another, which is the one thing a laminate floor must not do.
+  const minStag = Math.max(0, f.minStagger ?? FLOOR_DEFAULTS.minStagger);
+  const staggerPossible = Math.min(minStag, len/2);
+  let prevBase = null, worstStagger = Infinity;
 
   // Silly plank sizes would otherwise lay hundreds of thousands of pieces and
   // hang the frame, so the layout stops rather than the browser.
@@ -3592,6 +3618,10 @@ function layFloor(f){
                     : f.stagger === 'third' ? (i % 3) * len/3
                     : (carry >= f.minUse ? carry : 0);
     let jointBase = alongOrigin + rowOffset;
+    // The stagger rule overrides all three patterns. It rarely bites on halves or
+    // thirds; it bites often on offcuts, which is the point of applying it here
+    // rather than trusting the pattern.
+    if(prevBase !== null) jointBase = enforceStagger(prevBase, jointBase, len, minStag);
     for(const [rLo, rHi] of runs){
       let a = rLo, first2 = true;
       while(a < rHi - 1e-6 && laid++ < MAX_PLANKS){
@@ -3625,7 +3655,11 @@ function layFloor(f){
         a = end;
       }
     }
-    if(planks.length) rows.push({cLo, cHi, planks});
+    if(planks.length){
+      if(prevBase !== null) worstStagger = Math.min(worstStagger, latticeGap(prevBase, jointBase, len));
+      prevBase = jointBase;
+      rows.push({cLo, cHi, planks, jointBase});
+    }
   }
 
   const netMm2 = rows.reduce((n,row) =>
@@ -3638,6 +3672,13 @@ function layFloor(f){
     binnedMm2: binnedMm * wid,
     rowCount: rows.length,
     alongLo, alongHi, acrossLo, acrossHi,
+    minStaggerAsked: minStag,
+    // Null when there is only one row, so there is no pair to measure.
+    minStaggerGot: rows.length > 1 ? worstStagger : null,
+    // True when the plank is too short for the rule to be satisfiable at all:
+    // the joints can never be more than half a plank apart.
+    staggerImpossible: minStag > len/2 + 1e-9,
+    staggerBest: staggerPossible,
   };
 }
 
@@ -5100,6 +5141,16 @@ function floorFields(f){
       fNum('Expansion gap (mm)', f.gap, v => { f.gap = Math.max(0,v); }),
       fNum('Shortest usable offcut (mm)', f.minUse, v => { f.minUse = Math.max(0,v); }),
     ]),
+    fNum('Minimum stagger (mm)', f.minStagger, v => { f.minStagger = Math.max(0,v); }),
+    t.staggerImpossible
+      ? el('div', {cls:'hint', style:'color:#D9534F;',
+          text:`A ${f.plankLen}mm plank cannot stagger by more than `
+            + `${Math.round(t.staggerBest)}mm — joints in touching rows are at best half `
+            + `a plank apart. Laid at ${Math.round(t.staggerBest)}mm; shorten the rule or `
+            + `use a plank at least ${f.minStagger*2}mm long.`})
+      : el('div', {cls:'hint', text:`End joints in touching rows are kept at least `
+          + `${Math.round(f.minStagger)}mm apart` + (t.minStaggerGot === null ? '.'
+            : ` — the closest on this floor is ${Math.round(t.minStaggerGot)}mm.`)}),
     fNum('Waste allowance (%)', f.waste, v => { f.waste = Math.max(0,v); }),
     // Measured as laid, so a plank running into a splay counts whole — which is
     // what you pay for, since you buy it and then cut it.
@@ -5719,6 +5770,8 @@ function refreshSchedule(){
       ['Laid', (f.horiz ? 'Left to right' : 'Up and down')
         + ', ' + STAGGER_LABELS[f.stagger].toLowerCase()],
       ['Rows', String(fl.rowCount)],
+      ['Closest joint between rows', fl.minStaggerGot === null
+        ? 'only one row' : fmtD(fl.minStaggerGot) + ` (rule: ${fmtD(fl.minStaggerAsked)})`],
       ['Plank area laid', fmtArea(fl.netMm2)],
       ['Planks used', `${fl.planksUsed} (${fl.cuts} cut)`],
       ['Offcut', fmtArea(fl.offcutMm2)],
@@ -6533,6 +6586,8 @@ function schedulePage(){
     row('Laid', (floor.horiz ? 'Left to right' : 'Up and down')
       + ', ' + STAGGER_LABELS[floor.stagger].toLowerCase());
     row('Rows', String(fl.rowCount));
+    row('Closest joint between rows', fl.minStaggerGot === null
+      ? 'only one row' : fmtD(fl.minStaggerGot) + ` (rule: ${fmtD(fl.minStaggerAsked)})`);
     row('Plank area laid', fmtArea(fl.netMm2));
     row('Planks used', `${fl.planksUsed} (${fl.cuts} cut)`);
     row(`Plus ${Math.round(floor.waste)}% waste`, `${fl.planksWithWaste} planks`);

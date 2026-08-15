@@ -77,6 +77,17 @@ a fitter actually does, and it is why the direction and the starting point chang
 total — the same room can want two or three planks more or fewer depending on how it
 is set out.
 
+**End joints in touching rows are kept at least 300mm apart**, which is the rule every
+laminate manufacturer asks for. It is enforced on the lay itself rather than left to
+the stagger pattern to get right: letting the offcut decide is what makes a floor look
+natural, but on some room sizes it puts a joint straight on top of the one below. The
+schedule reports the closest joint on the floor so the rule can be checked, and the
+minimum is editable if a particular product asks for more.
+
+Joints sit on a lattice one plank long, so they can never be more than **half a plank**
+apart — a 300mm rule needs planks of at least 600mm. Ask for more than the plank can
+give and it says so, and lays to the best it can manage rather than pretending.
+
 **Find the best pattern** tries 144 layouts — both directions, three stagger patterns,
 six joint positions along a row and four places to split the rows — and keeps the one
 using fewest planks. Splitting the rows matters as much as the joints: a 40mm sliver

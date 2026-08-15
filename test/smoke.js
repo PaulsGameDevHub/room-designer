@@ -1457,6 +1457,10 @@ function layIn(w, h, opts){
   return api.floor;
 }
 
+// The joints in one row, dropping the last because that is the wall, not a joint
+// with anything. Declared here so the tests above the stagger block can use it.
+function rowJoints(row){ return row.planks.map(p => p.a1).slice(0, -1); }
+
 check('one click lays a floor with sensible defaults', () => {
   emptyRoom();
   api.addFlooring();
@@ -1469,26 +1473,37 @@ check('one click lays a floor with sensible defaults', () => {
     : fail(`${f.plankLen}×${f.plankWid} perBox=${f.perBox} horiz=${f.horiz} underUnits=${f.underUnits}`);
 });
 
-check('a floor that divides exactly uses exactly the planks it should', () => {
-  // 4000 × 2000 in 1000 × 500 planks: 4 rows of 4, nothing cut, no waste at all.
+check('a floor that divides exactly still costs only the planks it should', () => {
+  // 4000 × 2000 in 1000 × 500 planks is four rows of four. Laying every row the
+  // same would use no cuts at all — and stack every joint on the one below, which
+  // the stagger rule forbids. So rows alternate: whole planks, then a 300 start
+  // and a 700 finish which the offcut covers. Four cuts, but still 16 planks and
+  // still not a millimetre wasted.
   const f = layIn(4000, 2000, {plankLen:1000, plankWid:500});
   const t = api.floorTotals(f);
-  return t.planksUsed === 16 && t.cuts === 0 && Math.abs(t.netMm2 - 8e6) < 1
-    ? `16 planks in ${t.rowCount} rows, none cut, covering ${(t.netMm2/1e6).toFixed(2)}m²`
-    : fail(`${t.planksUsed} planks, ${t.cuts} cut, ${t.rowCount} rows, ${t.netMm2}mm²`);
+  const joints = api.layFloor(f).rows.map(r => rowJoints(r).map(Math.round).join('/'));
+  if(t.planksUsed !== 16 || Math.abs(t.netMm2 - 8e6) < 1 === false)
+    return fail(`${t.planksUsed} planks, ${t.netMm2}mm²`);
+  return t.cuts === 4 && t.offcutMm2 < 1 && joints[0] === '1000/2000/3000' && joints[1] === '300/1300/2300/3300'
+    ? `16 planks, 4 cut, nothing wasted — rows go ${joints[0]} then ${joints[1]}`
+    : fail(`${t.cuts} cuts, ${t.offcutMm2}mm² offcut, joints ${joints.slice(0,2).join(' then ')}`);
 });
 
 check('starting each row with the offcut saves planks', () => {
   // 4500 × 2000 in 1000 × 500. Each row is four whole planks and a 500 cut; the
-  // 500 left over starts the next row, so alternate rows cost four planks, not
-  // five. 5+4+5+4 = 18 rather than 20.
+  // 500 left over both starts the next row and staggers it, so alternate rows
+  // cost four planks rather than five: 5+4+5+4 = 18.
+  //
+  // Throw the offcuts away and every row would start at zero, which the stagger
+  // rule will not allow — so those rows get cut to a 300 start instead, and end
+  // with a 200 tail that needs a sixth plank: 5+6+5+6 = 22.
   const f = layIn(4500, 2000, {plankLen:1000, plankWid:500});
   const withReuse = api.floorTotals(f).planksUsed;
   f.minUse = 9999;                  // nothing is ever worth keeping
   const without = api.floorTotals(f).planksUsed;
-  return withReuse === 18 && without === 20
-    ? `18 planks using the offcuts, 20 throwing them away`
-    : fail(`${withReuse} with reuse, ${without} without — expected 18 and 20`);
+  return withReuse === 18 && without === 22
+    ? `18 planks using the offcuts, 22 throwing them away`
+    : fail(`${withReuse} with reuse, ${without} without — expected 18 and 22`);
 });
 
 check('the offcut floor wastes nothing, and the numbers agree', () => {
@@ -1699,6 +1714,105 @@ check('no floor means no flooring section anywhere', () => {
   return s.flooring === null && p.content.length
     ? 'schedule has no flooring, and the plan still draws'
     : fail(`flooring=${JSON.stringify(s.flooring)}`);
+});
+
+// Measured off the drawn planks rather than off the lattice the layout works in,
+// so this checks the floor that actually gets laid.
+function closestJoint(lay){
+  let worst = Infinity, where = null;
+  for(let i=1; i<lay.rows.length; i++){
+    for(const a of rowJoints(lay.rows[i])){
+      for(const b of rowJoints(lay.rows[i-1])){
+        const d = Math.abs(a-b);
+        if(d < worst){ worst = d; where = `row ${i} at ${Math.round(a)} vs row ${i-1} at ${Math.round(b)}`; }
+      }
+    }
+  }
+  return {worst, where};
+}
+
+check('joints in touching rows are never closer than 300mm', () => {
+  // Before this rule went in, 4780x3160 stacked a joint exactly on top of the one
+  // below it and 5000x4000 came within 110mm. Every stagger mode is swept.
+  const rooms = [[4200,3000],[4780,3160],[3050,2130],[5000,4000],[8220,5050],[2400,2400],[6100,3050]];
+  let worst = Infinity, worstAt = null, checked = 0;
+  for(const stagger of ['offcut','half','third']){
+    for(const [w,h] of rooms){
+      const f = layIn(w, h, {plankLen:1220, plankWid:190, gap:10, stagger});
+      const c = closestJoint(api.layFloor(f));
+      checked++;
+      if(c.worst < worst){ worst = c.worst; worstAt = `${w}x${h} ${stagger}: ${c.where}`; }
+    }
+  }
+  return worst >= 300 - 1e-6
+    ? `${checked} floors swept, closest joint anywhere was ${Math.round(worst)}mm`
+    : fail(`${Math.round(worst)}mm apart — ${worstAt}`);
+});
+
+check('the rule holds for plank sizes that are awkward about it', () => {
+  let worst = Infinity, worstAt = null, checked = 0;
+  for(const [len,wid] of [[1200,190],[1285,192],[900,150],[610,200],[2000,200],[1380,244]]){
+    for(const stagger of ['offcut','half','third']){
+      const f = layIn(4780, 3160, {plankLen:len, plankWid:wid, gap:10, stagger});
+      const lay = api.layFloor(f);
+      const c = closestJoint(lay);
+      checked++;
+      // A 610mm plank can only just manage 300, so allow the honest ceiling.
+      const allowed = Math.min(300, len/2);
+      if(c.worst - allowed < worst - 1e-9){ worst = c.worst; worstAt = `${len}x${wid} ${stagger} allowed ${allowed}: ${c.where}`; }
+      if(c.worst < allowed - 1e-6) return fail(`${len}x${wid} ${stagger} — ${Math.round(c.worst)}mm, needed ${allowed}mm (${c.where})`);
+    }
+  }
+  return `${checked} plank sizes swept, every one keeping its stagger`;
+});
+
+check('a plank too short to stagger by 300 says so instead of pretending', () => {
+  // Joints can never be more than half a plank apart, so a 400mm plank tops out
+  // at 200mm however it is laid.
+  const f = layIn(4000, 2000, {plankLen:400, plankWid:200, gap:0});
+  const t = api.floorTotals(f);
+  const got = closestJoint(api.layFloor(f)).worst;
+  return t.staggerImpossible && Math.abs(t.staggerBest - 200) < 1e-6 && Math.abs(got - 200) < 1e-6
+    ? `400mm plank flagged as impossible, laid at its best 200mm instead`
+    : fail(`impossible=${t.staggerImpossible} best=${t.staggerBest} got=${got}`);
+});
+
+check('asking for a bigger stagger gets one', () => {
+  const f = layIn(6100, 3050, {plankLen:1220, plankWid:190, gap:10});
+  const at300 = closestJoint(api.layFloor(f)).worst;
+  f.minStagger = 600;
+  const at600 = closestJoint(api.layFloor(f)).worst;
+  return at300 >= 300 && at600 >= 600 - 1e-6
+    ? `closest joint went from ${Math.round(at300)}mm to ${Math.round(at600)}mm when the rule was raised`
+    : fail(`${Math.round(at300)}mm at a 300 rule, ${Math.round(at600)}mm at a 600 rule`);
+});
+
+check('the stagger rule is reported, not just applied', () => {
+  const f = layIn(8220, 5050, {plankLen:1220, plankWid:190, gap:10});
+  const s = api.computeSchedule();
+  const measured = closestJoint(api.layFloor(f)).worst;
+  return s.flooring.minStaggerAsked === 300
+    && Math.abs(s.flooring.minStaggerGot - measured) < 1e-6
+    ? `schedule reports the closest joint as ${Math.round(measured)}mm against a 300mm rule`
+    : fail(`asked ${s.flooring.minStaggerAsked}, reported ${s.flooring.minStaggerGot}, measured ${measured}`);
+});
+
+check('the stagger rule survives save and load', () => {
+  const f = layIn(4200, 3000, {plankLen:1220, plankWid:190, minStagger:450});
+  api.applySnapshot(JSON.parse(JSON.stringify(api.roomData())));
+  return api.floor.minStagger === 450
+    ? 'kept the 450mm rule through a round trip'
+    : fail(`became ${api.floor.minStagger}`);
+});
+
+check('a floor saved before the rule existed gets the 300mm default', () => {
+  const f = layIn(4200, 3000, {plankLen:1220, plankWid:190});
+  const data = JSON.parse(JSON.stringify(api.roomData()));
+  delete data.floor.minStagger;
+  api.applySnapshot(data);
+  return api.floor.minStagger === 300 && closestJoint(api.layFloor(api.floor)).worst >= 300
+    ? 'defaulted to 300mm and laid to it'
+    : fail(`minStagger=${api.floor.minStagger}`);
 });
 
 check('the search rescues a floor left with a sliver row against the wall', () => {
