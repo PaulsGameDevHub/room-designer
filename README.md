@@ -65,6 +65,33 @@ in red and labelled with the overshoot. Both heights can be set by clicking them
 Elevation as well as in the sidebar. The schedule reports the area under boxing, the
 lowest clear height, and how much floor keeps full headroom.
 
+**Flooring** — lay a plank floor and find out how much to buy. Type the plank size
+(1220 × 190 for a typical laminate) and how many planks come in a box, and the
+schedule reports the planks used, the offcut, the waste allowance and the number of
+boxes to order.
+
+The count is a **simulated lay, not an area sum**. Planks run in rows; each row is
+laid end to end and cut at both ends, and the offcut from one row starts the next
+whenever it is longer than the shortest usable piece (300mm by default). That is what
+a fitter actually does, and it is why the direction and the starting point change the
+total — the same room can want two or three planks more or fewer depending on how it
+is set out.
+
+**Find the best pattern** tries 144 layouts — both directions, three stagger patterns,
+six joint positions along a row and four places to split the rows — and keeps the one
+using fewest planks. Splitting the rows matters as much as the joints: a 40mm sliver
+row against a wall still costs a full row of planks, ripped down.
+
+The pattern is drawn on the floor and **can be dragged**. Grab the round grip on the
+first plank and slide it, or press `R` to turn the planks the other way; a whole
+plank's shift returns it to where it was, so the numbers stay readable.
+
+It is **cut around** walls, wall stubs, angled splays, floor-standing kitchen units
+and boxing that reaches the floor. Wall units are overhead so the floor runs under
+them, and loose furniture is not fitted so it is ignored. One button switches to
+running under the units instead. The area reported is measured as laid — a plank
+running into a splay counts whole, because you buy it and then cut it.
+
 **Boxing** — a run of casing hiding a beam, a soil stack or pipework. One click adds
 a 1000 × 100mm piece the size of a wall stub, full height from floor to ceiling.
 Length, depth, height and height off the floor are all typed in, so the same tool
@@ -120,8 +147,8 @@ lines, plinths and overhead units. The two far walls are mirrored, because you a
 standing inside the room looking at them.
 
 **Schedule** computes floor area, perimeter, gross and net wall area, internal wall run,
-worktop run, unit counts by type and width, and a furniture list. Enter optional rates
-to get an indicative cost.
+worktop run, unit counts by type and width, a furniture list, and the flooring order.
+Enter optional rates to get an indicative cost.
 
 **Exports**
 - **PDF** — a real vector PDF at 1:20, 1:50, 1:100 or 1:200, on A4 or A3 landscape

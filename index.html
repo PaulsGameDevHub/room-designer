@@ -108,6 +108,7 @@ table.sched tr.total td{font-weight:600;border-top:1px solid var(--bd);border-bo
     <button onclick="addRadiator()">Add radiator</button>
     <button onclick="addBoxing()">Add boxing</button>
     <button onclick="addSlope()">Sloped ceiling</button>
+    <button id="btn-floor" onclick="togglePanel('floor-panel','btn-floor')">Flooring</button>
     <button id="btn-schedule" onclick="toggleSchedule()">Schedule</button>
     <div class="sep"></div>
     <button id="btn-undo" onclick="undo()" title="Ctrl+Z">Undo</button>
@@ -220,6 +221,11 @@ table.sched tr.total td{font-weight:600;border-top:1px solid var(--bd);border-bo
         </div>
       </div>
 
+      <div id="floor-panel" style="display:none;">
+        <h3>Flooring</h3>
+        <div class="panel" id="floor-body"></div>
+      </div>
+
       <div id="selected-panel" style="display:none;">
         <div class="panel" id="selected-info"></div>
       </div>
@@ -269,7 +275,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-15 13:27';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-15 14:40';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -425,6 +431,9 @@ let view = 'plan';                 // 'plan' | 'elev'
 
 let drawnWalls = [], wallPieces = [], corners = [], openings = [], roomLabels = [];
 let kitchenUnits = [], furniture = [], fittings = [], slopes = [];
+// One floor covering per room, or null for none. Not a collection: it is not
+// selectable or deletable in the usual way, it is a property of the room.
+let floor = null;
 
 let mode = 'select';
 let selectedItem = null, dragging = null, dragOffX = 0, dragOffY = 0;
@@ -2020,6 +2029,7 @@ function drawPlan(){
   ctx.strokeStyle = COL.room; ctx.lineWidth = 2.5;
   ctx.strokeRect(r0.x, r0.y, r1.x-r0.x, r1.y-r0.y);
 
+  drawFlooring();        // first of all, since everything is laid on top of it
   drawSlopes();          // under everything, since it describes the ceiling
   drawGrid(r0, r1);
   drawRoomDims();
@@ -2051,6 +2061,85 @@ function drawPlan(){
     }
   }
 }
+
+// Planks are drawn as laid, from the same pass that counts them, so the picture
+// and the order quantity cannot drift apart. Units and walls are drawn after
+// this and cover the parts of a plank that get cut away.
+function drawFlooring(){
+  if(!floor || !floor.show) return;
+  const f = floor;
+  const lay = layFloor(f);
+  const {pt} = floorAxes(f);
+  const px = (a,c) => { const p = pt(a,c); return toC(p.x, p.y); };
+  const sel = selectedItem === f;
+
+  ctx.save();
+  ctx.setLineDash([]);
+  let n = 0;
+  for(const row of lay.rows){
+    for(const p of row.planks){
+      const c1 = px(p.a0, row.cLo), c2 = px(p.a1, row.cHi);
+      const x = Math.min(c1.x,c2.x), y = Math.min(c1.y,c2.y);
+      const w = Math.abs(c2.x-c1.x), h = Math.abs(c2.y-c1.y);
+      // A little variation board to board, so a floor reads as boards rather
+      // than as a grid. Deterministic, so it does not shimmer when redrawn.
+      const shade = 0.055 + ((n*37) % 5) * 0.012;
+      ctx.fillStyle = `rgba(185,139,78,${shade.toFixed(3)})`;
+      ctx.fillRect(x, y, w, h);
+      n++;
+    }
+  }
+  // Joints on top of every fill, so a plank edge is never hidden by its neighbour.
+  ctx.strokeStyle = sel ? COL.sel : 'rgba(185,139,78,0.55)';
+  ctx.lineWidth = sel ? 1.2 : 0.8;
+  ctx.beginPath();
+  for(const row of lay.rows){
+    for(const p of row.planks){
+      const c1 = px(p.a0, row.cLo), c2 = px(p.a1, row.cHi);
+      ctx.rect(Math.min(c1.x,c2.x), Math.min(c1.y,c2.y),
+               Math.abs(c2.x-c1.x), Math.abs(c2.y-c1.y));
+    }
+  }
+  ctx.stroke();
+  ctx.restore();
+
+  if(view === 'plan') drawFloorHandle(lay);
+}
+
+// Where to take hold of the pattern. Sitting on the first plank means it moves
+// with the floor, so it always points at what dragging will shift.
+function floorHandleAt(lay){
+  if(!floor) return null;
+  const l = lay || layFloor(floor);
+  const row = l.rows[0];
+  if(!row || !row.planks.length) return null;
+  const p = row.planks[0];
+  const {pt} = floorAxes(floor);
+  return pt((p.a0+p.a1)/2, (row.cLo+row.cHi)/2);
+}
+
+function drawFloorHandle(lay){
+  const m = floorHandleAt(lay);
+  if(!m) return;
+  const c = toC(m.x, m.y);
+  const sel = selectedItem === floor;
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.fillStyle = sel ? COL.sel : 'rgba(185,139,78,0.9)';
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(c.x, c.y, sel ? 7 : 5.5, 0, Math.PI*2);
+  ctx.fill(); ctx.stroke();
+  // A four-way arrow, which is the usual sign for "drag me".
+  ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(c.x-3, c.y); ctx.lineTo(c.x+3, c.y);
+  ctx.moveTo(c.x, c.y-3); ctx.lineTo(c.x, c.y+3);
+  ctx.stroke();
+  ctx.restore();
+}
+const FLOOR_HANDLE_MM = () => 9/Math.max(scale, 1e-6);
 
 // The 100mm grid is skipped once it would be denser than a few pixels — at
 // that point it is a grey wash that costs hundreds of strokes per frame.
@@ -3331,6 +3420,288 @@ function addBoxing(){
     + `its height and how far off the floor it sits`);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  Flooring
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Planks are laid in rows. A row is a strip one plank wide running the length
+// of the room; within a row planks butt end to end and are cut at each end.
+//
+// The count that matters is planks, not area, because a fitter starts each row
+// with the offcut left from the last one whenever it is long enough to use.
+// That is what makes the direction and the starting offset worth choosing:
+// the same floor can want noticeably different numbers of planks.
+//
+// Everything below works in along/across coordinates so one piece of code does
+// both directions — along runs the length of a plank, across steps row to row.
+
+const FLOOR_DEFAULTS = {
+  plankLen: 1220, plankWid: 190, perBox: 8,
+  gap: 10,            // expansion gap left at every wall, hidden by beading
+  minUse: 300,        // shorter offcuts than this get thrown away, not started with
+  waste: 10,          // extra % on the area figure, for damage and mistakes
+};
+const FLOOR_COLOR = '#B98B4E';
+const STAGGER_LABELS = {offcut:'Use the offcut (random)', half:'Half plank', third:'Third of a plank'};
+
+function newFloor(){
+  return {
+    material:'Laminate',
+    plankLen:FLOOR_DEFAULTS.plankLen, plankWid:FLOOR_DEFAULTS.plankWid,
+    perBox:FLOOR_DEFAULTS.perBox, gap:FLOOR_DEFAULTS.gap,
+    minUse:FLOOR_DEFAULTS.minUse, waste:FLOOR_DEFAULTS.waste,
+    horiz:roomW >= roomH,     // planks normally run the long way
+    stagger:'offcut',
+    ox:0, oy:0,               // pattern origin, dragged about by the user
+    underUnits:false,         // laminate normally stops at the units' plinths
+    show:true,
+  };
+}
+
+// Which way is along, which is across.
+const floorAxes = f => f.horiz
+  ? {alongOf:(x,y)=>x, acrossOf:(x,y)=>y, pt:(a,c)=>({x:a, y:c}), alongMax:roomW, acrossMax:roomH}
+  : {alongOf:(x,y)=>y, acrossOf:(x,y)=>x, pt:(a,c)=>({x:c, y:a}), alongMax:roomH, acrossMax:roomW};
+
+// The rectangle the covering actually reaches, once the expansion gap is taken
+// off every wall.
+function floorRect(f){
+  const g = Math.max(0, f.gap);
+  return {x1:g, y1:g, x2:roomW-g, y2:roomH-g};
+}
+
+// Everything standing on the floor that the covering is cut around. Wall units
+// are overhead so the floor runs under them; a sofa is not fitted, so it does
+// not count either. Walls, splays, floor-standing units and boxing do.
+function floorObstacles(f){
+  const out = [];
+  for(const c of corners) if(c.snapped !== false) out.push(cornerGeometry(c));
+  for(const p of wallPieces) out.push(itemCorners(p));
+  for(const w of drawnWalls) out.push(dwCorners(w));
+  if(!f.underUnits){
+    for(const ku of kitchenUnits) if(!ku.overhead) out.push(itemCorners(ku));
+    for(const b of furniture) if(b.isBoxing && (b.mountH ?? 0) <= 0) out.push(itemCorners(b));
+  }
+  return out;
+}
+
+// Where a convex polygon crosses a given across-coordinate, as an along span.
+function polySpanAt(poly, across, f){
+  const {alongOf, acrossOf} = floorAxes(f);
+  let lo = Infinity, hi = -Infinity;
+  for(let i=0; i<poly.length; i++){
+    const p = poly[i], q = poly[(i+1) % poly.length];
+    const pc = acrossOf(p.x,p.y), qc = acrossOf(q.x,q.y);
+    const pa = alongOf(p.x,p.y), qa = alongOf(q.x,q.y);
+    if(Math.abs(pc-across) < 1e-9){ lo = Math.min(lo,pa); hi = Math.max(hi,pa); }
+    if((pc < across) === (qc < across)) continue;      // edge does not cross
+    const t = (across-pc)/(qc-pc);
+    const a = pa + t*(qa-pa);
+    lo = Math.min(lo,a); hi = Math.max(hi,a);
+  }
+  return lo <= hi ? [lo,hi] : null;
+}
+
+const mergeSpans = spans => {
+  const s = spans.filter(Boolean).sort((a,b) => a[0]-b[0]);
+  const out = [];
+  for(const sp of s){
+    const last = out[out.length-1];
+    if(last && sp[0] <= last[1] + 1e-9) last[1] = Math.max(last[1], sp[1]);
+    else out.push([sp[0], sp[1]]);
+  }
+  return out;
+};
+const intersectSpanSets = (a, b) => {
+  const out = [];
+  for(const p of a) for(const q of b){
+    const lo = Math.max(p[0],q[0]), hi = Math.min(p[1],q[1]);
+    if(hi - lo > 1e-9) out.push([lo,hi]);
+  }
+  return mergeSpans(out);
+};
+const subtractSpans = (from, cut) => {
+  let out = [[from[0], from[1]]];
+  for(const c of cut){
+    const next = [];
+    for(const s of out){
+      if(c[1] <= s[0] || c[0] >= s[1]){ next.push(s); continue; }
+      if(c[0] > s[0]) next.push([s[0], c[0]]);
+      if(c[1] < s[1]) next.push([c[1], s[1]]);
+    }
+    out = next;
+  }
+  return out;
+};
+
+const mod = (v, m) => ((v % m) + m) % m;
+
+// The runs of a row that still need planking. A row is only skipped where an
+// obstacle covers its whole width — a unit poking halfway into a row still has
+// to be planked past and scribed, which is what a fitter would do.
+function rowRuns(f, cLo, cHi, obstacles){
+  const r = floorRect(f);
+  const aLo = f.horiz ? r.x1 : r.y1, aHi = f.horiz ? r.x2 : r.y2;
+  const rcLo = f.horiz ? r.y1 : r.x1, rcHi = f.horiz ? r.y2 : r.x2;
+  const lo = Math.max(cLo, rcLo), hi = Math.min(cHi, rcHi);
+  if(hi - lo < 1e-6) return [];
+  const eps = Math.min(1, (hi-lo)/4);
+  const samples = [lo+eps, (lo+hi)/2, hi-eps];
+  let blocked = null;
+  for(const s of samples){
+    const here = mergeSpans(obstacles.map(p => polySpanAt(p, s, f)));
+    blocked = blocked === null ? here : intersectSpanSets(blocked, here);
+    if(!blocked.length) break;
+  }
+  return subtractSpans([aLo, aHi], blocked || []).filter(s => s[1]-s[0] > 1e-6);
+}
+
+// Lay the whole floor. Returns the plank rectangles for drawing and the counts
+// for the schedule, from one pass so the two can never disagree.
+function layFloor(f){
+  const r = floorRect(f);
+  const acrossLo = f.horiz ? r.y1 : r.x1, acrossHi = f.horiz ? r.y2 : r.x2;
+  const alongLo  = f.horiz ? r.x1 : r.y1, alongHi  = f.horiz ? r.x2 : r.y2;
+  const wid = Math.max(1, f.plankWid), len = Math.max(1, f.plankLen);
+  const obstacles = floorObstacles(f);
+  const origin = f.horiz ? f.oy : f.ox;
+  const alongOrigin = f.horiz ? f.ox : f.oy;
+
+  // Start on the row boundary at or before the top of the floored area, so
+  // dragging the origin slides the pattern rather than re-laying it.
+  const first = acrossLo - mod(acrossLo - origin, wid);
+  const rows = [];
+  let carry = 0;                 // usable offcut left over from the row before
+  let planksUsed = 0, cuts = 0, binnedMm = 0;
+
+  // Silly plank sizes would otherwise lay hundreds of thousands of pieces and
+  // hang the frame, so the layout stops rather than the browser.
+  const MAX_PLANKS = 20000;
+  let laid = 0;
+
+  for(let i = 0, c = first; c < acrossHi - 1e-6 && laid < MAX_PLANKS; i++, c += wid){
+    const cLo = Math.max(c, acrossLo), cHi = Math.min(c+wid, acrossHi);
+    const runs = rowRuns(f, cLo, cHi, obstacles);
+    const planks = [];
+    // Where this row's joints fall. 'offcut' lets the carried piece decide,
+    // which is what gives a laminate floor its irregular look; the other two
+    // step by a fixed fraction of a plank. Either way the pattern is anchored to
+    // the dragged origin, so moving the floor slides the joints rather than
+    // re-laying it from scratch.
+    const rowOffset = f.stagger === 'half'  ? (i % 2) * len/2
+                    : f.stagger === 'third' ? (i % 3) * len/3
+                    : (carry >= f.minUse ? carry : 0);
+    let jointBase = alongOrigin + rowOffset;
+    for(const [rLo, rHi] of runs){
+      let a = rLo, first2 = true;
+      while(a < rHi - 1e-6 && laid++ < MAX_PLANKS){
+        // The first piece of a run is cut so the joints line up with jointBase.
+        let pieceLen = len;
+        if(first2){
+          const off = mod(jointBase - rLo, len);
+          if(off > 1e-6) pieceLen = off;
+          first2 = false;
+        }
+        const end = Math.min(a + pieceLen, rHi);
+        const need = end - a;
+        // A usable offcut is laid instead of opening a new plank — which is the
+        // whole reason the plank count is not simply area divided by plank size.
+        const useCarry = carry >= f.minUse && carry >= need - 1e-6;
+        if(useCarry){
+          const left = carry - need;
+          if(left >= f.minUse) carry = left;
+          else { binnedMm += left; carry = 0; }
+          if(need < len - 1e-6) cuts++;
+        }else{
+          planksUsed++;
+          if(need < len - 1e-6){
+            cuts++;
+            const off = len - need;
+            if(off >= f.minUse){ binnedMm += carry; carry = off; }
+            else binnedMm += off;
+          }
+        }
+        planks.push({a0:a, a1:end, cLo, cHi, cut:need < len - 1e-6, carried:useCarry});
+        a = end;
+      }
+    }
+    if(planks.length) rows.push({cLo, cHi, planks});
+  }
+
+  const netMm2 = rows.reduce((n,row) =>
+    n + row.planks.reduce((m,p) => m + (p.a1-p.a0)*(p.cHi-p.cLo), 0), 0);
+  const boughtMm2 = planksUsed * len * wid;
+  return {
+    rows, planksUsed, cuts,
+    netMm2, boughtMm2,
+    offcutMm2: Math.max(0, boughtMm2 - netMm2),
+    binnedMm2: binnedMm * wid,
+    rowCount: rows.length,
+    alongLo, alongHi, acrossLo, acrossHi,
+  };
+}
+
+// The layout the user is shown, plus the numbers to order from.
+function floorTotals(f){
+  const lay = layFloor(f);
+  const perBox = Math.max(1, Math.round(f.perBox || 1));
+  const boxArea = perBox * f.plankLen * f.plankWid;
+  const withWaste = Math.ceil(lay.planksUsed * (1 + Math.max(0, f.waste)/100));
+  return {
+    ...lay,
+    perBox, boxAreaMm2:boxArea,
+    planksWithWaste: withWaste,
+    boxes: Math.ceil(withWaste / perBox),
+    coverageMm2: Math.ceil(withWaste / perBox) * boxArea,
+  };
+}
+
+// Try every sensible layout and keep the one needing fewest planks. Ties go to
+// the one with least offcut, so the answer is stable rather than whichever was
+// tested first.
+function bestFloorPattern(f){
+  const len = Math.max(1, f.plankLen), wid = Math.max(1, f.plankWid);
+  // Where the joints fall along a row, and where the rows themselves split. The
+  // second matters as much as the first: a 40mm sliver row against a wall still
+  // costs a full row of planks, ripped down.
+  const alongOffs  = [0, len/4, len/3, len/2, 2*len/3, 3*len/4];
+  const acrossOffs = [0, wid/4, wid/2, 3*wid/4];
+  let best = null;
+  for(const horiz of [true, false]){
+    for(const stagger of ['offcut','half','third']){
+      for(const a of alongOffs){
+        for(const c of acrossOffs){
+          const trial = {...f, horiz, stagger,
+                         ox: horiz ? a : c, oy: horiz ? c : a};
+          const t = floorTotals(trial);
+          const key = [t.planksUsed, t.offcutMm2];
+          if(!best || key[0] < best.key[0] || (key[0] === best.key[0] && key[1] < best.key[1])){
+            best = {key, horiz, stagger, ox:trial.ox, oy:trial.oy,
+                    planksUsed:t.planksUsed, boxes:t.boxes};
+          }
+        }
+      }
+    }
+  }
+  return best;
+}
+
+function addFlooring(){
+  pushHistory();
+  floor = newFloor();
+  setMode('select');
+  showSelected(); refreshFloorPanel(); requestDraw(); scheduleAutosave();
+  status(`Flooring: ${floor.plankLen}×${floor.plankWid}mm planks, `
+    + `${floorTotals(floor).boxes} box(es) — drag the floor to shift the pattern`);
+}
+
+function removeFlooring(){
+  pushHistory();
+  floor = null;
+  refreshFloorPanel(); requestDraw(); scheduleAutosave();
+  status('Flooring removed');
+}
+
 function addFitting(){
   const fType = FITTING_SPECS[$('fit-type').value] ? $('fit-type').value : 'socket2';
   const spec = FITTING_SPECS[fType];
@@ -3768,6 +4139,7 @@ function addFurniture(){
 
 function deleteSelected(){
   if(!selectedItem) return;
+  if(selectedItem === floor){ selectedItem = null; removeFlooring(); showSelected(); return; }
   pushHistory();
   const target = selectedItem;
   drawnWalls   = drawnWalls.filter(x => x !== target);
@@ -3832,7 +4204,7 @@ function snapshot(){
     kitchenUnits: kitchenUnits.map(strip),
     furniture:    furniture.map(strip),
     fittings:     fittings.map(strip),
-    slopes,
+    slopes, floor,
   }));
 }
 
@@ -3895,6 +4267,8 @@ function applySnapshot(s){
   furniture    = s.furniture    || [];
   fittings     = s.fittings     || [];
   slopes       = s.slopes       || [];
+  // Files saved before flooring existed simply have no floor, which is correct.
+  floor = s.floor ? Object.assign(newFloor(), s.floor) : null;
   for(const z of slopes){
     z.type ??= 'slope';
     z.width ??= SLOPE_DEFAULTS.width;
@@ -4043,13 +4417,14 @@ function updateHistoryButtons(){
 }
 
 function clearAll(){
-  const total = COLLECTIONS().reduce((n,c) => n+c.length, 0);
+  const total = COLLECTIONS().reduce((n,c) => n+c.length, 0) + (floor ? 1 : 0);
   if(!total) return;
   pushHistory();
   drawnWalls = []; wallPieces = []; corners = []; openings = [];
   roomLabels = []; kitchenUnits = []; furniture = []; fittings = []; slopes = [];
+  floor = null;
   selectedItem = null;
-  showSelected(); requestDraw();
+  showSelected(); refreshFloorPanel(); requestDraw();
   status('Cleared — Undo will bring it back');
 }
 
@@ -4145,12 +4520,14 @@ function togglePanel(panelId, btnId){
   $('furniture-panel').style.display = 'none';
   $('electric-panel').style.display = 'none';
   $('label-place-panel').style.display = 'none';
+  $('floor-panel').style.display = 'none';
   document.querySelectorAll('#toolbar button').forEach(b => b.classList.remove('active'));
   if(showing){
     $('btn-select').classList.add('active');
   }else{
     p.style.display = 'block';
     $(btnId).classList.add('on');
+    if(panelId === 'floor-panel') refreshFloorPanel();
   }
   mode = 'select';
 }
@@ -4165,7 +4542,18 @@ function canvasPos(e){
 }
 
 // Topmost item under the given room-space point, searched front to back.
+// Is the point on the flooring's drag grip?
+function ptInFloorHandle(mx, my){
+  if(!floor || !floor.show) return false;
+  const m = floorHandleAt();
+  if(!m) return false;
+  return Math.hypot(mx-m.x, my-m.y) <= FLOOR_HANDLE_MM();
+}
+
 function pickAt(mx, my){
+  // The floor grip is a deliberate target sitting over everything else, so it
+  // has to be tested before the things drawn on top of the floor.
+  if(ptInFloorHandle(mx,my)) return floor;
   // Fittings are small, so they get first refusal on a click.
   for(const f of fittings)     if(ptInFitting(mx,my,f)) return f;
   for(const o of openings)     if(ptInOpening(mx,my,o)) return o;
@@ -4209,7 +4597,12 @@ canvas.addEventListener('pointerdown', e => {
   dragging = found;
   canvas.setPointerCapture(e.pointerId);
 
-  if(fittings.includes(found)){
+  if(found === floor){
+    // The room stays put and the pattern slides under it, so the drag works on
+    // the pattern origin rather than on a position in the room.
+    dragOffX = mp.x - floor.ox;
+    dragOffY = mp.y - floor.oy;
+  }else if(fittings.includes(found)){
     // Lift it off the wall so it can travel to another one.
     if(found.snapped){
       const bb = fittingBB(found);
@@ -4260,7 +4653,18 @@ canvas.addEventListener('pointermove', e => {
 
   if(dragging){
     const d = dragging;
-    if(wallPieces.includes(d)){
+    if(d === floor){
+      // Shifting by a whole plank puts the pattern back where it was, so the
+      // offset is kept within one plank and the numbers stay readable.
+      const xMod = Math.max(1, d.horiz ? d.plankLen : d.plankWid);
+      const yMod = Math.max(1, d.horiz ? d.plankWid : d.plankLen);
+      d.ox = mod(raw.x-dragOffX, xMod);
+      d.oy = mod(raw.y-dragOffY, yMod);
+      const t = floorTotals(d);
+      status(`Pattern shifted to ${Math.round(d.ox)}, ${Math.round(d.oy)}mm — `
+        + `${t.planksUsed} planks, ${t.boxes} box(es)`);
+      refreshFloorPanel();
+    }else if(wallPieces.includes(d)){
       d.cx = sg(raw.x-dragOffX); d.cy = sg(raw.y-dragOffY);
       dragSnap(d, wallPieces.indexOf(d));
       status(d.snapped ? 'Release to place here' : 'Drag near a wall to snap');
@@ -4515,7 +4919,12 @@ window.addEventListener('keyup', e => {
 function nudgeSelected(dx, dy){
   const it = selectedItem;
   pushHistory();
-  if(wallPieces.includes(it)){
+  if(it === floor){
+    // Same wrap as dragging: a whole plank's shift is no shift at all.
+    it.ox = mod(it.ox + dx, Math.max(1, it.horiz ? it.plankLen : it.plankWid));
+    it.oy = mod(it.oy + dy, Math.max(1, it.horiz ? it.plankWid : it.plankLen));
+    refreshFloorPanel();
+  }else if(wallPieces.includes(it)){
     it.cx += dx; it.cy += dy;
     releaseSnap(it, wallPieces.indexOf(it));
   }else if(kitchenUnits.includes(it) || furniture.includes(it)){
@@ -4552,7 +4961,10 @@ function rotateSelected(){
   const it = selectedItem;
   if(!it || it.locked) return;
   pushHistory();
-  if(corners.includes(it)){
+  if(it === floor){
+    it.horiz = !it.horiz;
+    refreshFloorPanel();
+  }else if(corners.includes(it)){
     it.rot = (it.rot+1) % 4;
   }else if(it.isBoxing){
     rotateBoxing(it);
@@ -4652,6 +5064,87 @@ function lockBtn(it){
 }
 const delBtn = () => btn('Delete', deleteSelected);
 
+// ── Flooring controls ──────────────────────────────────────────────────────
+//
+// The same block of fields serves the toolbar panel and the sidebar, so the
+// numbers can never say two different things depending on where you look.
+function floorFields(f){
+  const t = floorTotals(f);
+  const wrap = el('div');
+  const redo = () => { refreshFloorPanel(); showSelected(); requestDraw(); refreshSchedule(); };
+  // numField and selField refresh the sidebar for us, but this block also lives
+  // in the toolbar panel, so every change has to redraw that copy as well.
+  const fNum = (label, value, set, opts) =>
+    numField(label, value, v => { set(v); refreshFloorPanel(); refreshSchedule(); }, opts);
+  const fSel = (label, options, current, set) =>
+    selField(label, options, current, v => { set(v); refreshFloorPanel(); refreshSchedule(); });
+
+  wrap.append(
+    heading('Flooring'),
+    el('div', {cls:'hint', text:'Planks are counted the way they are laid: each row '
+      + 'starts with the offcut from the last one when it is long enough to use, '
+      + 'which is why the direction and starting point change the total.'}),
+    el('div', {cls:'row'}, [
+      fNum('Plank length (mm)', f.plankLen, v => { f.plankLen = Math.max(50,v); }, {min:50}),
+      fNum('Plank width (mm)', f.plankWid, v => { f.plankWid = Math.max(20,v); }, {min:20}),
+    ]),
+    fNum('Planks per box', f.perBox, v => { f.perBox = Math.max(1, Math.round(v)); }, {min:1}),
+    fSel('Planks run', [['1','Left to right'],['0','Up and down']], f.horiz ? '1' : '0',
+      v => { f.horiz = v === '1'; }),
+    fSel('Stagger', Object.entries(STAGGER_LABELS), f.stagger, v => { f.stagger = v; }),
+    el('div', {cls:'row'}, [
+      fNum('Shift across (mm)', Math.round(f.ox), v => { f.ox = Math.max(0,v); }),
+      fNum('Shift down (mm)', Math.round(f.oy), v => { f.oy = Math.max(0,v); }),
+    ]),
+    el('div', {cls:'row'}, [
+      fNum('Expansion gap (mm)', f.gap, v => { f.gap = Math.max(0,v); }),
+      fNum('Shortest usable offcut (mm)', f.minUse, v => { f.minUse = Math.max(0,v); }),
+    ]),
+    fNum('Waste allowance (%)', f.waste, v => { f.waste = Math.max(0,v); }),
+    // Measured as laid, so a plank running into a splay counts whole — which is
+    // what you pay for, since you buy it and then cut it.
+    readout('Plank area laid', fmtArea(t.netMm2)),
+    readout('Planks used', `${t.planksUsed} whole planks, ${t.cuts} cut`),
+    readout('With ' + Math.round(f.waste) + '% waste', `${t.planksWithWaste} planks`),
+    readout('Boxes to order', `${t.boxes} (${fmtArea(t.coverageMm2)} of covering)`),
+    btn('Find the best pattern', () => {
+      pushHistory();
+      const b = bestFloorPattern(f);
+      if(!b) return;
+      f.horiz = b.horiz; f.stagger = b.stagger; f.ox = b.ox; f.oy = b.oy;
+      redo();
+      status(`Best of the patterns tried: planks ${b.horiz ? 'left to right' : 'up and down'}, `
+        + `${STAGGER_LABELS[b.stagger].toLowerCase()} — ${b.planksUsed} planks, ${b.boxes} box(es)`);
+    }, 'primary'),
+    btn(f.underUnits ? 'Running under the units — click to stop at them'
+                     : 'Stops at the units — click to run underneath',
+      () => { pushHistory(); f.underUnits = !f.underUnits; redo(); }, f.underUnits ? 'on' : ''),
+    btn(f.show ? 'Pattern shown — click to hide' : 'Pattern hidden — click to show',
+      () => { f.show = !f.show; redo(); }, f.show ? 'on' : ''),
+    btn('Remove flooring', () => { selectedItem = null; removeFlooring(); showSelected(); }),
+    el('div', {cls:'hint', text:'Drag the round grip on the floor to slide the pattern, '
+      + 'or press R to turn the planks the other way.'}),
+  );
+  return wrap;
+}
+
+// The toolbar panel shows the same controls, or an Add button when there is no
+// floor yet.
+function refreshFloorPanel(){
+  const body = $('floor-body');
+  if(!body) return;
+  body.textContent = '';
+  if(!floor){
+    body.append(
+      el('div', {cls:'hint', text:'Lay a plank floor to work out how many boxes to '
+        + 'order. It is cut around walls, splays, floor-standing units and boxing.'}),
+      btn('Add flooring', addFlooring, 'primary'),
+    );
+    return;
+  }
+  body.append(floorFields(floor));
+}
+
 function showSelected(){
   const panel = $('selected-panel'), info = $('selected-info');
   refreshElevWalls();
@@ -4660,7 +5153,9 @@ function showSelected(){
   panel.style.display = 'block';
   const it = selectedItem;
 
-  if(wallPieces.includes(it)){
+  if(it === floor){
+    info.append(floorFields(it));
+  }else if(wallPieces.includes(it)){
     info.append(
       heading('Wall piece'),
       readout('Status', isAngled(it)
@@ -5114,9 +5609,13 @@ function computeSchedule(){
   }
   const grand = lines.reduce((n,l) => n+l.total, 0);
 
+  // Flooring, if any has been laid.
+  const flooring = floor ? floorTotals(floor) : null;
+
   return {
     areaMm2, perimeterMm, wallAreaMm2, openingAreaMm2,
     netWallAreaMm2: Math.max(0, wallAreaMm2 - openingAreaMm2),
+    flooring,
     units, unitTotal, worktopMm, furn, doors, windows, internalWallMm,
     fits, fitTotal, rads, radTotal, radWatts,
     boxings, clashes,
@@ -5209,6 +5708,29 @@ function refreshSchedule(){
     }else{
       body.append(el('div', {cls:'hint', text:'No units clash with it.'}));
     }
+  }
+
+  if(s.flooring){
+    const fl = s.flooring, f = floor;
+    body.append(el('div', {cls:'divider'}));
+    body.append(heading('Flooring'));
+    body.append(table(null, [
+      ['Plank', `${f.plankLen}×${f.plankWid}mm`],
+      ['Laid', (f.horiz ? 'Left to right' : 'Up and down')
+        + ', ' + STAGGER_LABELS[f.stagger].toLowerCase()],
+      ['Rows', String(fl.rowCount)],
+      ['Plank area laid', fmtArea(fl.netMm2)],
+      ['Planks used', `${fl.planksUsed} (${fl.cuts} cut)`],
+      ['Offcut', fmtArea(fl.offcutMm2)],
+      [`Plus ${Math.round(f.waste)}% waste`, `${fl.planksWithWaste} planks`],
+      ['Planks per box', String(fl.perBox)],
+      ['Boxes to order', String(fl.boxes)],
+      ['Covering in those boxes', fmtArea(fl.coverageMm2)],
+    ]));
+    body.append(el('div', {cls:'hint', text: f.underUnits
+      ? 'Laid under the kitchen units, so the whole floor is covered.'
+      : 'Cut around walls, splays, floor-standing units and boxing — the covering '
+        + 'stops at them rather than running underneath.'}));
   }
 
   if(s.slopeCount){
@@ -5534,6 +6056,22 @@ function planPage(denom){
   g.re(X(roomW), Y(roomH)-wt, wt, roomH*k + wt*2).f();
   g.ink(INK.wallLine).lw(0.6);
   g.re(X(0)-wt, Y(roomH)-wt, roomW*k + wt*2, roomH*k + wt*2).S();
+
+  // Flooring, before anything else, since it is what everything sits on. The
+  // same layFloor pass the screen uses, so the drawing cannot disagree with the
+  // plank count printed on the schedule page.
+  if(floor && floor.show){
+    const lay = layFloor(floor);
+    const {pt} = floorAxes(floor);
+    g.ink(shade(hexRgb(FLOOR_COLOR), 0.15)).lw(0.35);
+    for(const row of lay.rows){
+      for(const p of row.planks){
+        const a = pt(p.a0, row.cLo), b = pt(p.a1, row.cHi);
+        const x1 = Math.min(a.x,b.x), y1 = Math.min(a.y,b.y);
+        g.re(X(x1), Y(Math.max(a.y,b.y)), Math.abs(b.x-a.x)*k, Math.abs(b.y-a.y)*k).S();
+      }
+    }
+  }
 
   // Room outline
   g.ink(INK.room).lw(1.4);
@@ -5988,6 +6526,21 @@ function schedulePage(){
     gap();
   }
 
+  if(s.flooring){
+    const fl = s.flooring;
+    sectionTitle('Flooring');
+    row('Plank', `${floor.plankLen} x ${floor.plankWid}mm`);
+    row('Laid', (floor.horiz ? 'Left to right' : 'Up and down')
+      + ', ' + STAGGER_LABELS[floor.stagger].toLowerCase());
+    row('Rows', String(fl.rowCount));
+    row('Plank area laid', fmtArea(fl.netMm2));
+    row('Planks used', `${fl.planksUsed} (${fl.cuts} cut)`);
+    row(`Plus ${Math.round(floor.waste)}% waste`, `${fl.planksWithWaste} planks`);
+    row('Planks per box', String(fl.perBox));
+    row('Boxes to order', String(fl.boxes), true);
+    gap();
+  }
+
   if(s.slopeCount){
     sectionTitle('Sloped ceilings');
     row('Boxed zones', String(s.slopeCount));
@@ -6135,6 +6688,7 @@ function loadRoom(input){
       selectedItem = null;
       showSelected();
       refreshSchedule();
+      refreshFloorPanel();
       fitView();
       status('Loaded ' + file.name + (data.version ? '' : ' (older format)'));
     }catch(err){
@@ -6207,9 +6761,11 @@ function sessionSummary(data){
     [data.slopes,      'sloped ceiling', 'sloped ceilings'],
     [data.roomLabels,  'label', 'labels'],
   ];
-  return groups
+  const parts = groups
     .filter(([a]) => a && a.length)
     .map(([a, one, many]) => `${a.length} ${a.length === 1 ? one : many}`);
+  if(data.floor) parts.push('a plank floor');
+  return parts;
 }
 
 function offerRestore(data){
@@ -6229,10 +6785,12 @@ function restoreNew(){
   $('restore-dialog').style.display = 'none';
   drawnWalls = []; wallPieces = []; corners = []; openings = [];
   roomLabels = []; kitchenUnits = []; furniture = []; fittings = []; slopes = [];
+  floor = null;
   past.length = 0; future.length = 0;
   selectedItem = null;
   updateHistoryButtons();
   showSelected();
+  refreshFloorPanel();
   fitView();
   writeAutosave();          // at once, so the old session cannot come back
   status(`Started empty — the ${fmtD(roomW)} × ${fmtD(roomH)} room size was kept`);

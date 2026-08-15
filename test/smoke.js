@@ -155,6 +155,10 @@ const exposed = `
   ptInFitting, fittingBB, drawFittings, FITTING_SPECS, pointInPoly,
   addRadiator, radOutput, RAD_SPECS, RAD_MOUNT_H, RAD_DEFAULTS,
   addBoxing, BOXING_DEFAULTS, BOXING_COLOR, rotateBoxing,
+  get floor(){return floor}, set floor(v){floor=v},
+  addFlooring, removeFlooring, newFloor, layFloor, floorTotals, bestFloorPattern,
+  floorObstacles, floorRect, floorAxes, rowRuns, floorHandleAt, ptInFloorHandle,
+  drawFlooring, refreshFloorPanel, FLOOR_DEFAULTS, FLOOR_COLOR, STAGGER_LABELS,
   get dimHitAreas(){return dimHitAreas}, openDim, confirmDim, hitTest,
   get slopes(){return slopes}, addSlope, slopeBB, ptInSlope, clearHeightAt,
   slopeCrossing, elevClearHeightAt, elevHasSlope, HEADROOM_MM, SLOPE_DEFAULTS,
@@ -173,7 +177,7 @@ const exposed = `
   boxInsideRoom, polyArea, clipByConvex, refreshElevWalls, rebindCornerSnaps,
   spanOf, depthOf, itemAngle, itemAxes, itemCorners, itemPolygon, itemAABB, ptInItem,
   placeOnHyp, itemHypGaps, itemInsideRoom, hypCandidates, unsnapPiece, anchorPiece,
-  rotateWallPiece, rotateSelected,
+  rotateWallPiece, rotateSelected, nudgeSelected,
   settleInRun, settleInAngledRun, separateUnits, anchorBox,
   releaseSnap, cornerGeometry, refreshSchedule, showSelected, applyRoom, setBoxRot,
   writeAutosave, restoreAutosave, exportPDF, exportPNG, saveRoom, textWidthPt,
@@ -1441,6 +1445,283 @@ check('boxing survives save and load and draws everywhere', () => {
   return p.content.length
     ? `kept ${after[0]}, drawn in plan, at ${items[0].z1}-${items[0].z2} in elevation, and in the PDF`
     : fail('the PDF produced no content');
+});
+
+// ── Flooring ─────────────────────────────────────────────────────────────────
+// The plank count is the thing worth being exact about, so most of these are
+// rooms whose layout can be worked out on paper and checked against.
+function layIn(w, h, opts){
+  emptyRoom({roomW:w, roomH:h});
+  api.addFlooring();
+  Object.assign(api.floor, {gap:0, minUse:300, stagger:'offcut', ox:0, oy:0}, opts || {});
+  return api.floor;
+}
+
+check('one click lays a floor with sensible defaults', () => {
+  emptyRoom();
+  api.addFlooring();
+  const f = api.floor;
+  if(!f) return fail('no floor was laid');
+  const d = api.FLOOR_DEFAULTS;
+  const ok = f.plankLen === d.plankLen && f.plankWid === d.plankWid && f.perBox === d.perBox;
+  return ok && f.horiz && !f.underUnits
+    ? `${f.plankLen}×${f.plankWid}mm planks, ${f.perBox} to a box, running the long way, stopping at the units`
+    : fail(`${f.plankLen}×${f.plankWid} perBox=${f.perBox} horiz=${f.horiz} underUnits=${f.underUnits}`);
+});
+
+check('a floor that divides exactly uses exactly the planks it should', () => {
+  // 4000 × 2000 in 1000 × 500 planks: 4 rows of 4, nothing cut, no waste at all.
+  const f = layIn(4000, 2000, {plankLen:1000, plankWid:500});
+  const t = api.floorTotals(f);
+  return t.planksUsed === 16 && t.cuts === 0 && Math.abs(t.netMm2 - 8e6) < 1
+    ? `16 planks in ${t.rowCount} rows, none cut, covering ${(t.netMm2/1e6).toFixed(2)}m²`
+    : fail(`${t.planksUsed} planks, ${t.cuts} cut, ${t.rowCount} rows, ${t.netMm2}mm²`);
+});
+
+check('starting each row with the offcut saves planks', () => {
+  // 4500 × 2000 in 1000 × 500. Each row is four whole planks and a 500 cut; the
+  // 500 left over starts the next row, so alternate rows cost four planks, not
+  // five. 5+4+5+4 = 18 rather than 20.
+  const f = layIn(4500, 2000, {plankLen:1000, plankWid:500});
+  const withReuse = api.floorTotals(f).planksUsed;
+  f.minUse = 9999;                  // nothing is ever worth keeping
+  const without = api.floorTotals(f).planksUsed;
+  return withReuse === 18 && without === 20
+    ? `18 planks using the offcuts, 20 throwing them away`
+    : fail(`${withReuse} with reuse, ${without} without — expected 18 and 20`);
+});
+
+check('the offcut floor wastes nothing, and the numbers agree', () => {
+  const f = layIn(4500, 2000, {plankLen:1000, plankWid:500});
+  const t = api.floorTotals(f);
+  const bought = t.planksUsed * f.plankLen * f.plankWid;
+  return Math.abs(t.netMm2 - 9e6) < 1 && Math.abs(bought - t.netMm2) < 1 && t.offcutMm2 < 1
+    ? `9.00m² of floor from 9.00m² of planks — every offcut used`
+    : fail(`net ${t.netMm2}, bought ${bought}, offcut ${t.offcutMm2}`);
+});
+
+check('boxes are worked out from planks and the waste allowance', () => {
+  const f = layIn(4500, 2000, {plankLen:1000, plankWid:500, perBox:8, waste:10});
+  const t = api.floorTotals(f);
+  // 18 planks + 10% = 19.8, rounded up to 20, which is three boxes of eight.
+  return t.planksUsed === 18 && t.planksWithWaste === 20 && t.boxes === 3
+    ? `18 planks becomes 20 with 10% waste, so 3 boxes of 8`
+    : fail(`${t.planksUsed} planks, ${t.planksWithWaste} with waste, ${t.boxes} boxes`);
+});
+
+check('a kitchen unit is cut around, not floored under', () => {
+  const f = layIn(4000, 2000, {plankLen:1000, plankWid:500});
+  const clear = api.floorTotals(f);
+  const ku = dropUnit(1000, 500, 250);        // against the top wall, filling row 0
+  ku.depth = 500; ku.carcassDepth = 500; ku.doorDepth = 0;
+  api.anchorBox(ku); api.settleBox(ku);
+  const cut = api.floorTotals(f);
+  return cut.netMm2 < clear.netMm2 && cut.planksUsed < clear.planksUsed
+    ? `${(clear.netMm2/1e6).toFixed(2)}m² fell to ${(cut.netMm2/1e6).toFixed(2)}m², `
+      + `${clear.planksUsed} planks to ${cut.planksUsed}`
+    : fail(`area ${clear.netMm2}→${cut.netMm2}, planks ${clear.planksUsed}→${cut.planksUsed}`);
+});
+
+check('the floor runs under a wall unit, which is overhead', () => {
+  const f = layIn(4000, 2000, {plankLen:1000, plankWid:500});
+  const clear = api.floorTotals(f).netMm2;
+  document.getElementById('ku-type').value = 'wall';
+  document.getElementById('ku-width').value = '1000';
+  api.addKitchenUnit();
+  const wu = api.kitchenUnits[api.kitchenUnits.length-1];
+  wu.cx = 500; wu.cy = 250; api.snapBox(wu);
+  if(!wu.overhead) return fail('the wall unit is not marked overhead');
+  return Math.abs(api.floorTotals(f).netMm2 - clear) < 1
+    ? `area unchanged at ${(clear/1e6).toFixed(2)}m² — nothing is cut for an overhead unit`
+    : fail(`${clear} became ${api.floorTotals(f).netMm2}`);
+});
+
+check('boxing standing on the floor is cut around too', () => {
+  const f = layIn(4000, 2000, {plankLen:1000, plankWid:500});
+  const clear = api.floorTotals(f).netMm2;
+  const b = dropBoxing(500, 250, {width:1000, depth:500, mountH:0});
+  const onFloor = api.floorTotals(f).netMm2;
+  b.mountH = 2000;                  // now a beam up at the ceiling
+  const asBeam = api.floorTotals(f).netMm2;
+  return onFloor < clear && Math.abs(asBeam - clear) < 1
+    ? `pipe casing takes ${((clear-onFloor)/1e6).toFixed(2)}m² off the floor, a ceiling beam takes none`
+    : fail(`clear ${clear}, on the floor ${onFloor}, as a beam ${asBeam}`);
+});
+
+check('running under the units puts the whole floor back', () => {
+  const f = layIn(4000, 2000, {plankLen:1000, plankWid:500});
+  const ku = dropUnit(1000, 500, 250);
+  ku.depth = 500; ku.carcassDepth = 500; ku.doorDepth = 0;
+  api.anchorBox(ku); api.settleBox(ku);
+  const stopping = api.floorTotals(f).netMm2;
+  f.underUnits = true;
+  const under = api.floorTotals(f).netMm2;
+  return under > stopping && Math.abs(under - 8e6) < 1
+    ? `${(stopping/1e6).toFixed(2)}m² becomes the full ${(under/1e6).toFixed(2)}m²`
+    : fail(`${stopping} → ${under}`);
+});
+
+check('the expansion gap keeps the covering off the walls', () => {
+  const f = layIn(4000, 2000, {plankLen:1000, plankWid:500, gap:10});
+  const lay = api.layFloor(f);
+  const r = api.floorRect(f);
+  const first = lay.rows[0];
+  const lo = Math.min(...lay.rows.map(row => row.cLo));
+  const hi = Math.max(...lay.rows.map(row => row.cHi));
+  const a0 = Math.min(...first.planks.map(p => p.a0));
+  return Math.abs(lo - 10) < 1e-6 && Math.abs(hi - 1990) < 1e-6 && Math.abs(a0 - 10) < 1e-6
+    ? `covering runs ${r.x1}..${r.x2} × ${r.y1}..${r.y2}, 10mm clear of every wall`
+    : fail(`rows ${lo}..${hi}, first plank starts at ${a0}`);
+});
+
+check('turning the planks the other way re-lays them', () => {
+  const f = layIn(4000, 2000, {plankLen:1000, plankWid:500});
+  const across = api.layFloor(f).rowCount;
+  api.selectedItem = f;
+  api.rotateSelected();
+  const down = api.layFloor(f).rowCount;
+  return !f.horiz && across === 4 && down === 8
+    ? `4 rows across the room became 8 rows up it`
+    : fail(`horiz=${f.horiz}, ${across} rows became ${down}`);
+});
+
+check('shifting the pattern moves the joints without changing the room', () => {
+  const f = layIn(4500, 2000, {plankLen:1000, plankWid:500});
+  const before = api.layFloor(f).rows[0].planks.map(p => Math.round(p.a1)).join(',');
+  f.ox = 300;
+  const after = api.layFloor(f).rows[0].planks.map(p => Math.round(p.a1)).join(',');
+  const t = api.floorTotals(f);
+  return before !== after && Math.abs(t.netMm2 - 9e6) < 1
+    ? `joints moved from ${before} to ${after}, still covering 9.00m²`
+    : fail(`joints ${before} → ${after}, area ${t.netMm2}`);
+});
+
+check('a whole plank of shift is no shift at all', () => {
+  const f = layIn(4500, 2000, {plankLen:1000, plankWid:500});
+  const at0 = api.floorTotals(f).planksUsed;
+  api.selectedItem = f;
+  api.nudgeSelected(1000, 0);       // exactly one plank along
+  return Math.abs(f.ox) < 1e-6 && api.floorTotals(f).planksUsed === at0
+    ? `shifted a full 1000mm plank and came back to 0`
+    : fail(`ox=${f.ox}, planks ${at0} → ${api.floorTotals(f).planksUsed}`);
+});
+
+check('the best-pattern search finds a layout using fewer planks', () => {
+  // 3050 × 2130 in 1220 × 190: running the planks up the room instead of across
+  // it is genuinely two planks cheaper, which is the whole point of the button.
+  const f = layIn(3050, 2130, {plankLen:1220, plankWid:190, gap:10});
+  const before = api.floorTotals(f).planksUsed;
+  const best = api.bestFloorPattern(f);
+  Object.assign(f, {horiz:best.horiz, stagger:best.stagger, ox:best.ox, oy:best.oy});
+  const after = api.floorTotals(f).planksUsed;
+  if(after !== best.planksUsed)
+    return fail(`the search claimed ${best.planksUsed} but applying it gave ${after}`);
+  return after < before
+    ? `${before} planks down to ${after} by running them ${best.horiz ? 'left to right' : 'up and down'}`
+    : fail(`${before} planks was not improved on (${after})`);
+});
+
+check('the best pattern really is the best of the ones tried', () => {
+  // Re-walk the same candidates independently. If the search mis-tracked its
+  // minimum this finds a cheaper layout it should have picked.
+  const f = layIn(4000, 1830, {plankLen:1220, plankWid:190, gap:10});
+  const best = api.bestFloorPattern(f);
+  const len = f.plankLen, wid = f.plankWid;
+  let lowest = Infinity, tried = 0;
+  for(const horiz of [true, false]){
+    for(const stagger of ['offcut','half','third']){
+      for(const a of [0, len/4, len/3, len/2, 2*len/3, 3*len/4]){
+        for(const c of [0, wid/4, wid/2, 3*wid/4]){
+          const t = api.floorTotals({...f, horiz, stagger, ox: horiz ? a : c, oy: horiz ? c : a});
+          lowest = Math.min(lowest, t.planksUsed);
+          tried++;
+        }
+      }
+    }
+  }
+  return best.planksUsed === lowest
+    ? `${tried} layouts tried, the lowest was ${lowest} planks and that is what it chose`
+    : fail(`it chose ${best.planksUsed} but ${lowest} was available across ${tried} layouts`);
+});
+
+check('the drag grip sits on the floor and can be grabbed', () => {
+  const f = layIn(4000, 2000, {plankLen:1000, plankWid:500});
+  const m = api.floorHandleAt();
+  if(!m) return fail('no grip');
+  const inside = m.x >= 0 && m.x <= 4000 && m.y >= 0 && m.y <= 2000;
+  const grabbed = api.ptInFloorHandle(m.x, m.y) && api.pickAt(m.x, m.y) === f;
+  return inside && grabbed && !api.ptInFloorHandle(3900, 1900)
+    ? `grip at ${Math.round(m.x)},${Math.round(m.y)} picks the floor, and elsewhere does not`
+    : fail(`grip ${JSON.stringify(m)} inside=${inside} grabbed=${grabbed}`);
+});
+
+check('flooring survives save and load, and draws in plan and PDF', () => {
+  const f = layIn(4500, 2000, {plankLen:1220, plankWid:190, perBox:6, stagger:'half', ox:120});
+  const before = api.floorTotals(f);
+  api.applySnapshot(JSON.parse(JSON.stringify(api.roomData())));
+  const f2 = api.floor;
+  if(!f2) return fail('the floor did not survive');
+  const same = ['plankLen','plankWid','perBox','stagger','ox','horiz'].every(k => f2[k] === f[k]);
+  const after = api.floorTotals(f2);
+  if(!same || after.planksUsed !== before.planksUsed)
+    return fail(`fields kept=${same}, ${before.planksUsed} planks became ${after.planksUsed}`);
+  api.drawPlan();
+  const p = api.planPage(50);
+  return p.content.length
+    ? `kept ${f2.plankLen}×${f2.plankWid}, ${f2.stagger} stagger, ${after.planksUsed} planks, drawn in plan and PDF`
+    : fail('the PDF produced no content');
+});
+
+check('a room file saved before flooring existed loads without one', () => {
+  emptyRoom();
+  const data = JSON.parse(JSON.stringify(api.roomData()));
+  delete data.floor;
+  api.applySnapshot(data);
+  return api.floor === null
+    ? 'no floor, which is right for a file that never had one'
+    : fail(`got ${JSON.stringify(api.floor)}`);
+});
+
+check('the schedule reports the flooring order', () => {
+  const f = layIn(4500, 2000, {plankLen:1000, plankWid:500, perBox:8, waste:10});
+  const s = api.computeSchedule();
+  if(!s.flooring) return fail('no flooring section');
+  return s.flooring.boxes === 3 && s.flooring.planksUsed === 18
+    ? `18 planks, 3 boxes, ${(s.flooring.netMm2/1e6).toFixed(2)}m² covered`
+    : fail(`${s.flooring.planksUsed} planks, ${s.flooring.boxes} boxes`);
+});
+
+check('no floor means no flooring section anywhere', () => {
+  emptyRoom();
+  const s = api.computeSchedule();
+  api.drawPlan();
+  const p = api.planPage(50);
+  return s.flooring === null && p.content.length
+    ? 'schedule has no flooring, and the plan still draws'
+    : fail(`flooring=${JSON.stringify(s.flooring)}`);
+});
+
+check('the search rescues a floor left with a sliver row against the wall', () => {
+  // A row only 40mm deep still costs a full row of planks, ripped down its
+  // length. Nothing about the along-offset can fix that — the rows have to be
+  // split somewhere else — so this only passes if the search varies both.
+  const f = layIn(4200, 3000, {plankLen:1220, plankWid:190, gap:10});
+  f.oy = 40;                              // leaves a 40mm sliver at the top
+  const sliver = api.floorTotals(f).planksUsed;
+  const best = api.bestFloorPattern(f);
+  return best.planksUsed < sliver
+    ? `${sliver} planks with the sliver row, ${best.planksUsed} once the rows are re-split`
+    : fail(`${sliver} planks was not improved on (${best.planksUsed})`);
+});
+
+check('a silly plank size stops rather than hanging the browser', () => {
+  const f = layIn(8000, 8000, {plankLen:1, plankWid:1});
+  const t0 = Date.now();
+  const t = api.floorTotals(f);
+  const ms = Date.now() - t0;
+  return t.planksUsed > 0 && ms < 5000
+    ? `capped at ${t.planksUsed} planks in ${ms}ms instead of running away`
+    : fail(`${t.planksUsed} planks in ${ms}ms`);
 });
 
 // ── Radiators ────────────────────────────────────────────────────────────────
