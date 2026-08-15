@@ -147,6 +147,7 @@ const exposed = `
   boxInsideRoom, polyArea, clipByConvex, refreshElevWalls, rebindCornerSnaps,
   spanOf, depthOf, itemAngle, itemAxes, itemCorners, itemPolygon, itemAABB, ptInItem,
   placeOnHyp, itemHypGaps, itemInsideRoom, hypCandidates, unsnapPiece, anchorPiece,
+  rotateWallPiece, rotateSelected,
   settleInRun, settleInAngledRun, separateUnits, anchorBox,
   releaseSnap, cornerGeometry, refreshSchedule, showSelected, applyRoom, setBoxRot,
   writeAutosave, restoreAutosave, exportPDF, exportPNG, saveRoom, textWidthPt,
@@ -394,7 +395,92 @@ check('a wall piece never penetrates an angled wall either', () => {
     : fail(`penetrated ${worst.toFixed(0)}mm2 at cursor y=${worstAt}`);
 });
 
+check('a wall piece can be turned a quarter turn', () => {
+  emptyRoom();
+  api.addWallPiece();
+  const p = api.wallPieces[0];
+  p.len = 1000; p.thick = 100;
+  p.cx = 1000; p.cy = 500;
+  p.orientationLocked = false;
+  api.releaseSnap(p, 0);
+  const before = api.wpBB(p);
+  const wasHoriz = p.horiz;
+
+  api.rotateWallPiece(p);
+  const after = api.wpBB(p);
+  if(p.horiz === wasHoriz) return fail('the orientation did not change');
+  // The length and thickness swap which axis they occupy.
+  const beforeSpan = [before.x2-before.x1, before.y2-before.y1];
+  const afterSpan  = [after.x2-after.x1, after.y2-after.y1];
+  if(Math.abs(afterSpan[0]-beforeSpan[1]) > 0.001 || Math.abs(afterSpan[1]-beforeSpan[0]) > 0.001)
+    return fail(`spans went ${beforeSpan} to ${afterSpan}, expected them swapped`);
+  return `${beforeSpan[0]}×${beforeSpan[1]} became ${afterSpan[0]}×${afterSpan[1]}, `
+    + `now running ${p.horiz ? 'left to right' : 'up and down'}`;
+});
+
+check('turning it twice returns it to where it started', () => {
+  emptyRoom();
+  api.addWallPiece();
+  const p = api.wallPieces[0];
+  p.len = 1200; p.thick = 100;
+  p.cx = 600; p.cy = 2000;
+  p.orientationLocked = false;
+  api.releaseSnap(p, 0);
+  const before = {horiz:p.horiz, face:p.snappedFace, bb:api.wpBB(p)};
+  api.rotateWallPiece(p);
+  api.rotateWallPiece(p);
+  const bb = api.wpBB(p);
+  const same = p.horiz === before.horiz
+    && Math.abs(bb.x1-before.bb.x1) < 0.001 && Math.abs(bb.y1-before.bb.y1) < 0.001
+    && Math.abs(bb.x2-before.bb.x2) < 0.001 && Math.abs(bb.y2-before.bb.y2) < 0.001;
+  return same
+    ? `back to ${p.horiz ? 'left to right' : 'up and down'} on the ${p.snappedFace} wall`
+    : fail(`ended at x ${bb.x1}..${bb.x2} y ${bb.y1}..${bb.y2}, started at `
+        + `x ${before.bb.x1}..${before.bb.x2} y ${before.bb.y1}..${before.bb.y2}`);
+});
+
+check('a turn keeps the piece inside the room and off the corners', () => {
+  emptyRoom({corners:[{rx:0, ry:0, wa:3500, ha:520, rot:0, snapped:'placed'}]});
+  api.addWallPiece();
+  const p = api.wallPieces[0];
+  p.len = 900; p.thick = 100;
+  p.cx = 450; p.cy = 1000;
+  p.orientationLocked = false;
+  api.releaseSnap(p, 0);
+  const results = [];
+  for(let i=0; i<4; i++){
+    api.rotateWallPiece(p);
+    const bb = api.wpBB(p);
+    if(bb.x1 < -0.001 || bb.y1 < -0.001 || bb.x2 > api.roomW+0.001 || bb.y2 > api.roomH+0.001)
+      return fail(`turn ${i+1} left it outside the room at x ${bb.x1}..${bb.x2} y ${bb.y1}..${bb.y2}`);
+    const area = api.cornerOverlapArea(api.piecePolygon
+      ? api.piecePolygon(p) : api.wpBB(p), api.corners[0]);
+    if(area > 1) return fail(`turn ${i+1} drove it ${Math.round(area)}mm2 into the splay`);
+    results.push(p.horiz ? 'across' : 'up');
+  }
+  return `four turns, always inside the room and clear of the splay: ${results.join(', ')}`;
+});
+
+check('the R key turns a selected wall piece too', () => {
+  emptyRoom();
+  api.addWallPiece();
+  const p = api.wallPieces[0];
+  p.len = 1000; p.thick = 100;
+  p.cx = 1000; p.cy = 500;
+  p.orientationLocked = false;
+  api.releaseSnap(p, 0);
+  const was = p.horiz;
+  api.selectedItem = p;
+  api.rotateSelected();
+  return p.horiz !== was
+    ? `R turned it from ${was ? 'left to right' : 'up and down'} to `
+      + `${p.horiz ? 'left to right' : 'up and down'}`
+    : fail('the R key left the orientation unchanged');
+});
+
 check('growing a wall piece into a splay pushes it back out', () => {
+  // Own splay: a 600x500 chamfer on the left wall, y 1900..2400.
+  emptyRoom({corners:[{rx:0, ry:1900, wa:600, ha:500, rot:0, snapped:'placed'}]});
   const c = api.corners[0];
   api.addWallPiece();
   const p = api.wallPieces[api.wallPieces.length-1];
@@ -421,6 +507,7 @@ check('growing a wall piece into a splay pushes it back out', () => {
 });
 
 check('a piece with nowhere valid to snap is left free rather than buried', () => {
+  emptyRoom({corners:[{rx:0, ry:1900, wa:600, ha:500, rot:0, snapped:'placed'}]});
   const c = api.corners[0];
   api.addWallPiece();
   const p = api.wallPieces[api.wallPieces.length-1];

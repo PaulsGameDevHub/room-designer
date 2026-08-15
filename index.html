@@ -268,7 +268,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-14 22:00';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-15 12:17';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -1043,6 +1043,19 @@ function itemInsideRoom(it){
     p.x >= -0.5 && p.x <= roomW+0.5 && p.y >= -0.5 && p.y <= roomH+0.5);
 }
 function boxInsideRoom(b){ return itemInsideRoom(b); }
+
+// Turn a wall piece a quarter turn. The orientation stays locked afterwards, so
+// re-snapping honours the turn rather than choosing an orientation afresh from
+// whatever wall happens to be nearest.
+function rotateWallPiece(p){
+  const idx = wallPieces.indexOf(p);
+  if(isAngled(p)) unsnapPiece(p);     // a turn takes it off an angled wall
+  p.horiz = !p.horiz;
+  p.orientationLocked = true;
+  clampToRoom(p);
+  reSnap(p, idx);
+  settlePiece(p);
+}
 
 function unsnapPiece(p){
   p.snapped = false;
@@ -4427,6 +4440,11 @@ function rotateSelected(){
     snapBox(it);
   }else if(openings.includes(it)){
     it.swing = it.swing === 'left' ? 'right' : 'left';
+  }else if(wallPieces.includes(it)){
+    rotateWallPiece(it);
+  }else if(slopes.includes(it)){
+    rotateSlope(it);
+    snapSlope(it);
   }else{
     past.pop();
     return;
@@ -4527,8 +4545,15 @@ function showSelected(){
       readout('Status', isAngled(it)
         ? `On angled wall ${corners.indexOf(it.snapCorner)+1} (${Math.round(itemAngle(it)*180/Math.PI)}°)`
         : it.snapped ? 'Snapped to ' + it.snappedEdge : 'Not snapped — drag to a wall'),
+      readout('Runs', isAngled(it) ? 'along the angled wall'
+                                   : it.horiz ? 'left to right' : 'up and down'),
       numField('Length (mm)', it.len, v => { it.len = Math.max(50,v); anchorPiece(it); settlePiece(it); }, {min:50}),
       numField('Thickness (mm)', it.thick, v => { it.thick = Math.max(10,v); anchorPiece(it); settlePiece(it); }, {min:10}),
+      btn('↻ Rotate 90°', () => {
+        pushHistory();
+        rotateWallPiece(it);
+        showSelected(); requestDraw();
+      }),
       lockBtn(it), delBtn()
     );
   }else if(corners.includes(it)){
