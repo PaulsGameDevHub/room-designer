@@ -134,6 +134,14 @@ Laying properly is not quite free. A room that divides exactly, like 4000 × 200
 1000 × 500 planks, could be laid in exactly 16 planks with no waste at all — by putting
 every joint on the one below and the one two above. Done correctly it takes 17.
 
+**The first and last row widths are both shown**, because ripping the first row is what
+decides the last, and you want both numbers before the saw comes out. They appear as
+dimensions on the plan whenever the floor is selected — click either one and type it, and
+the other follows — and as a pair of fields in the panel, alongside which wall each is
+against. **Even up first and last row** splits the leftover between the two ends, which
+is the usual set-out and often costs nothing: an 80mm last row becomes 135mm at both
+ends.
+
 **Thin cuts at a wall are flagged**, not forbidden. Anything under 60mm is too little to
 hold the locking profile, easy to snap, and it shows — but it cannot always be avoided,
 so those pieces are tinted red on the plan and in the PDF and counted in the schedule.

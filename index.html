@@ -275,7 +275,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-15 19:21';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-15 19:32';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -1870,6 +1870,12 @@ function openDim(tag, cx, cy){
   }else if(tag.type === 'slope-drop'){
     lbl.textContent = 'Drop from ceiling before the slope starts';
     inp.value = fmtE(slopeDrop(tag.slope));
+  }else if(tag.type === 'floor-row'){
+    const t = floorTotals(floor);
+    lbl.textContent = tag.which === 'first'
+      ? `First row width (${t.firstRowWall} wall) — sets the last row`
+      : `Last row width (${t.lastRowWall} wall) — sets the first row`;
+    inp.value = fmtE(tag.which === 'first' ? t.firstRowMm : t.lastRowMm);
   }
 
   const el = $('dim-editor');
@@ -1967,6 +1973,13 @@ function confirmDim(){
       b.cy = tag.side === 'lo' ? clamp(nearLo+v+half, half, roomH-half) : clamp(nearHi-v-half, half, roomH-half);
     }
     anchorBox(b);
+  }else if(tag.type === 'floor-row'){
+    if(tag.which === 'first') setFirstRowWidth(floor, val);
+    else setLastRowWidth(floor, val);
+    const t = floorTotals(floor);
+    refreshFloorPanel();
+    status(`First row ${Math.round(t.firstRowMm)}mm at the ${t.firstRowWall} wall, `
+      + `last row ${Math.round(t.lastRowMm)}mm at the ${t.lastRowWall} — ${t.planksUsed} planks`);
   }
 
   closeDim();
@@ -2111,7 +2124,30 @@ function drawFlooring(){
   }
   ctx.restore();
 
+  if(view === 'plan' && selectedItem === f) drawFloorRowDims(lay);
   if(view === 'plan') drawFloorHandle(lay);
+}
+
+// The widths of the two rows that get ripped by hand, dimensioned on the plan and
+// clickable so either can be typed. Only while the floor is selected, matching how
+// every other dimension in the plan behaves.
+function drawFloorRowDims(lay){
+  const f = floor;
+  if(lay.rows.length < 2) return;
+  const {pt} = floorAxes(f);
+  const ends = [
+    {row:lay.rows[0], which:'first'},
+    {row:lay.rows[lay.rows.length-1], which:'last'},
+  ];
+  for(const {row, which} of ends){
+    const w = row.cHi - row.cLo;
+    // Set the label just inside the covering, at the low end of the row.
+    const a = lay.alongLo + Math.min(600, (lay.alongHi-lay.alongLo)*0.12);
+    const p1 = pt(a, row.cLo), p2 = pt(a, row.cHi);
+    const c1 = toC(p1.x, p1.y), c2 = toC(p2.x, p2.y);
+    drawDimLine(c1.x, c1.y, c2.x, c2.y, fmtD(Math.round(w)), -1,
+      {type:'floor-row', which}, w < (f.minPiece ?? 60));
+  }
 }
 
 // Where to take hold of the pattern. Sitting on the first plank means it moves
@@ -3857,6 +3893,13 @@ function layFloor(f){
     alongLo, alongHi, acrossLo, acrossHi,
     minPieceAsked: minPiece,
     slimCount, slimRows,
+    // The two rows you rip by hand. Ripping the first one decides the last, so
+    // both are wanted before the saw comes out.
+    firstRowMm: rows.length ? rows[0].cHi - rows[0].cLo : null,
+    lastRowMm:  rows.length ? rows[rows.length-1].cHi - rows[rows.length-1].cLo : null,
+    firstRowWall: f.horiz ? 'top' : 'left',
+    lastRowWall:  f.horiz ? 'bottom' : 'right',
+    fullRowMm: wid,
     narrowestPieceMm: narrowestPiece === Infinity ? null : narrowestPiece,
     narrowestRowMm: narrowestRow === Infinity ? null : narrowestRow,
     minStaggerAsked: minStag,
@@ -3872,6 +3915,33 @@ function layFloor(f){
     hImpossible: minH > staggerCeiling(len, minStag) + 1e-9,
     hBest: hPossible,
   };
+}
+
+// Rip the first row to a chosen width. The rows tile from there, so this is the
+// one decision that fixes what the last row will be — which is why it is worth
+// being able to type rather than nudge.
+//
+// The first row spans from the edge of the covering to the next row boundary, so
+// its width is plankWid minus however far the origin sits into the band; putting
+// the origin at edge + W lands the boundary exactly W in.
+function setFirstRowWidth(f, mm){
+  const wid = Math.max(1, f.plankWid);
+  const r = floorRect(f);
+  const edge = f.horiz ? r.y1 : r.x1;
+  const w = clamp(mm, 1, wid);
+  const origin = mod(edge + w, wid);
+  if(f.horiz) f.oy = origin; else f.ox = origin;
+}
+
+// Setting the last row is the same decision seen from the other end: whatever is
+// left after the first row and a whole number of full ones.
+function setLastRowWidth(f, mm){
+  const wid = Math.max(1, f.plankWid);
+  const r = floorRect(f);
+  const total = (f.horiz ? r.y2-r.y1 : r.x2-r.x1);
+  const w = clamp(mm, 1, wid);
+  const first = mod(total - w, wid);
+  setFirstRowWidth(f, first < 1 ? wid : first);
 }
 
 // The layout the user is shown, plus the numbers to order from.
@@ -5370,6 +5440,36 @@ function floorFields(f){
     fNum('Waste allowance (%)', f.waste, v => { f.waste = Math.max(0,v); }),
     // Measured as laid, so a plank running into a splay counts whole — which is
     // what you pay for, since you buy it and then cut it.
+    // The two rows that get ripped. Shown together because setting one sets the
+    // other, and you want both numbers before cutting the first.
+    el('div', {cls:'row'}, [
+      fNum(`First row, ${t.firstRowWall} wall (mm)`, Math.round(t.firstRowMm ?? f.plankWid),
+        v => { setFirstRowWidth(f, v); }, {min:1}),
+      fNum(`Last row, ${t.lastRowWall} wall (mm)`, Math.round(t.lastRowMm ?? f.plankWid),
+        v => { setLastRowWidth(f, v); }, {min:1}),
+    ]),
+    el('div', {cls:'hint',
+      style: (t.firstRowMm < f.minPiece || t.lastRowMm < f.minPiece) ? 'color:#D9534F;' : '',
+      text: `Ripping the first row decides the last. A full plank is ${f.plankWid}mm`
+        + ((t.firstRowMm < f.minPiece || t.lastRowMm < f.minPiece)
+            ? `, and one of these is under the ${Math.round(f.minPiece)}mm warning.`
+            : '.')}),
+    btn('Even up first and last row', () => {
+      pushHistory();
+      // The classic set-out: share the leftover between the two ends so neither is
+      // a sliver. Whatever is left over the whole number of full rows gets halved.
+      const r = floorRect(f);
+      const total = f.horiz ? r.y2-r.y1 : r.x2-r.x1;
+      const wid = Math.max(1, f.plankWid);
+      const over = mod(total, wid);
+      // With nothing left over the ends are already full planks; otherwise the
+      // spare plank's width is split, which is what makes both ends respectable.
+      setFirstRowWidth(f, over < 1e-6 ? wid : (over + wid)/2);
+      redo();
+      const n = floorTotals(f);
+      status(`Evened up — first row ${Math.round(n.firstRowMm)}mm, `
+        + `last row ${Math.round(n.lastRowMm)}mm, ${n.planksUsed} planks`);
+    }),
     readout('Plank area laid', fmtArea(t.netMm2)),
     readout('Planks used', `${t.planksUsed} whole planks, ${t.cuts} cut`),
     readout('With ' + Math.round(f.waste) + '% waste', `${t.planksWithWaste} planks`),
@@ -5992,6 +6092,10 @@ function refreshSchedule(){
         ? 'only one row' : fmtD(fl.minStaggerGot) + ` (rule: ${fmtD(fl.minStaggerAsked)})`],
       ['Closest joint, two rows up', fl.minStaggerHGot === null
         ? 'under three rows' : fmtD(fl.minStaggerHGot) + ` (rule: ${fmtD(fl.minStaggerHAsked)})`],
+      [`First row (${fl.firstRowWall} wall)`, fl.firstRowMm === null ? '—'
+        : fmtD(fl.firstRowMm) + (fl.firstRowMm >= fl.fullRowMm - 1e-6 ? ' (full plank)' : ' — ripped')],
+      [`Last row (${fl.lastRowWall} wall)`, fl.lastRowMm === null ? '—'
+        : fmtD(fl.lastRowMm) + (fl.lastRowMm >= fl.fullRowMm - 1e-6 ? ' (full plank)' : ' — ripped')],
       ['Narrowest cut at a wall', fl.narrowestPieceMm === null
         ? 'no cut pieces' : fmtD(fl.narrowestPieceMm) + ` (warn under ${fmtD(fl.minPieceAsked)})`],
       ['Thinnest row', fl.narrowestRowMm === null ? '—' : fmtD(fl.narrowestRowMm)],
@@ -6825,6 +6929,10 @@ function schedulePage(){
       ? 'only one row' : fmtD(fl.minStaggerGot) + ` (rule: ${fmtD(fl.minStaggerAsked)})`);
     row('Closest joint, two rows up', fl.minStaggerHGot === null
       ? 'under three rows' : fmtD(fl.minStaggerHGot) + ` (rule: ${fmtD(fl.minStaggerHAsked)})`);
+    row(`First row (${fl.firstRowWall} wall)`, fl.firstRowMm === null ? '-'
+      : fmtD(fl.firstRowMm) + (fl.firstRowMm >= fl.fullRowMm - 1e-6 ? ' (full plank)' : ' - ripped'));
+    row(`Last row (${fl.lastRowWall} wall)`, fl.lastRowMm === null ? '-'
+      : fmtD(fl.lastRowMm) + (fl.lastRowMm >= fl.fullRowMm - 1e-6 ? ' (full plank)' : ' - ripped'));
     row('Narrowest cut at a wall', fl.narrowestPieceMm === null
       ? 'no cut pieces' : fmtD(fl.narrowestPieceMm) + ` (warn under ${fmtD(fl.minPieceAsked)})`);
     row('Thinnest row', fl.narrowestRowMm === null ? '-' : fmtD(fl.narrowestRowMm));

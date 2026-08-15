@@ -157,6 +157,7 @@ const exposed = `
   addBoxing, BOXING_DEFAULTS, BOXING_COLOR, rotateBoxing,
   get floor(){return floor}, set floor(v){floor=v},
   addFlooring, removeFlooring, newFloor, layFloor, floorTotals, bestFloorPattern,
+  setFirstRowWidth, setLastRowWidth, drawFloorRowDims,
   floorObstacles, floorRect, floorAxes, rowRuns, floorHandleAt, ptInFloorHandle,
   drawFlooring, refreshFloorPanel, FLOOR_DEFAULTS, FLOOR_COLOR, STAGGER_LABELS,
   get dimHitAreas(){return dimHitAreas}, openDim, confirmDim, hitTest,
@@ -1624,6 +1625,139 @@ check('a whole plank of shift is no shift at all', () => {
   return Math.abs(f.ox) < 1e-6 && api.floorTotals(f).planksUsed === at0
     ? `shifted a full 1000mm plank and came back to 0`
     : fail(`ox=${f.ox}, planks ${at0} → ${api.floorTotals(f).planksUsed}`);
+});
+
+check('the first and last row widths are both reported', () => {
+  // 2000 deep less two 10mm expansion gaps leaves 1980 to cover in 190mm planks.
+  // Whatever the first row is ripped to, the rest has to be a whole number of full
+  // rows plus the last one — that identity is the thing worth pinning, and it is
+  // what makes the reported pair trustworthy.
+  const f = layIn(4000, 2000, {plankLen:1220, plankWid:190, gap:10});
+  api.setFirstRowWidth(f, 190);
+  const t = api.floorTotals(f);
+  const lay = api.layFloor(f);
+  const measured = {
+    first: lay.rows[0].cHi - lay.rows[0].cLo,
+    last: lay.rows[lay.rows.length-1].cHi - lay.rows[lay.rows.length-1].cLo,
+  };
+  const sum = lay.rows.reduce((n,r) => n + (r.cHi-r.cLo), 0);
+  if(Math.abs(t.firstRowMm - measured.first) > 1e-6 || Math.abs(t.lastRowMm - measured.last) > 1e-6)
+    return fail(`reported ${t.firstRowMm}/${t.lastRowMm}, rows measure ${measured.first}/${measured.last}`);
+  const whole = lay.rows.length - 2;
+  return Math.abs(t.firstRowMm - 190) < 1e-6 && Math.abs(t.lastRowMm - 80) < 1e-6
+    && Math.abs(sum - 1980) < 1e-6 && Math.abs(190 + whole*190 + 80 - 1980) < 1e-6
+    && t.firstRowWall === 'top' && t.lastRowWall === 'bottom'
+    ? `first row 190mm at the top wall, last 80mm at the bottom, with ${whole} full rows between — 1980mm exactly`
+    : fail(`first ${t.firstRowMm} last ${t.lastRowMm}, ${lay.rows.length} rows summing to ${sum}`);
+});
+
+check('typing a first row width sets it, and tells you the last', () => {
+  // The point of the whole thing: before cutting the first row you want to know
+  // what the last one becomes.
+  const f = layIn(4000, 2000, {plankLen:1220, plankWid:190, gap:10});
+  const seen = [];
+  for(const w of [190, 135, 100, 60]){
+    api.setFirstRowWidth(f, w);
+    const t = api.floorTotals(f);
+    if(Math.abs(t.firstRowMm - w) > 1e-6)
+      return fail(`asked for a ${w}mm first row, got ${Math.round(t.firstRowMm)}mm`);
+    // 1980 to cover, so the two ends always account for the leftover between them.
+    const whole = Math.round((1980 - t.firstRowMm - t.lastRowMm)/190);
+    if(Math.abs(t.firstRowMm + t.lastRowMm + whole*190 - 1980) > 1e-6)
+      return fail(`${t.firstRowMm} + ${t.lastRowMm} + ${whole} full rows does not make 1980`);
+    seen.push(`${w}->${Math.round(t.lastRowMm)}`);
+  }
+  return `first row set to each of 190, 135, 100, 60mm; last row followed ${seen.join(', ')}`;
+});
+
+check('setting the last row width works back to the first', () => {
+  const f = layIn(4000, 2000, {plankLen:1220, plankWid:190, gap:10});
+  for(const w of [190, 150, 90]){
+    api.setLastRowWidth(f, w);
+    const t = api.floorTotals(f);
+    if(Math.abs(t.lastRowMm - w) > 1e-6)
+      return fail(`asked for a ${w}mm last row, got ${Math.round(t.lastRowMm)}mm`);
+  }
+  const t = api.floorTotals(f);
+  return `last row set directly, first row came out at ${Math.round(t.firstRowMm)}mm`;
+});
+
+check('the row widths can be clicked and typed on the plan', () => {
+  const f = layIn(4000, 2000, {plankLen:1220, plankWid:190, gap:10, oy:0});
+  api.selectedItem = f;
+  api.drawPlan();
+  const tags = api.dimHitAreas.filter(h => h.tag && h.tag.type === 'floor-row');
+  if(tags.length !== 2) return fail(`${tags.length} clickable row dimensions, expected 2`);
+  const first = tags.find(h => h.tag.which === 'first');
+  api.openDim(first.tag, 100, 100);
+  document.getElementById('dim-inp').value = '120';
+  api.confirmDim();
+  const t = api.floorTotals(f);
+  return Math.abs(t.firstRowMm - 120) < 1e-6
+    ? `clicked the first row dimension and retyped it to 120mm, last row now ${Math.round(t.lastRowMm)}mm`
+    : fail(`first row came out at ${Math.round(t.firstRowMm)}mm`);
+});
+
+check('evening up the ends stops either being a sliver', () => {
+  // 1980 in 190mm planks leaves 80 over. Split across the two ends that is 135mm
+  // each — one fewer full row, but nothing thin at either wall.
+  const f = layIn(4000, 2000, {plankLen:1220, plankWid:190, gap:10});
+  api.setFirstRowWidth(f, 190);            // full plank first, 80mm left at the end
+  const before = api.floorTotals(f);
+  const r = api.floorRect(f);
+  const total = r.y2 - r.y1;
+  const over = ((total % 190) + 190) % 190;
+  api.setFirstRowWidth(f, over < 1e-6 ? 190 : (over + 190)/2);
+  const after = api.floorTotals(f);
+  const bothEqual = Math.abs(after.firstRowMm - after.lastRowMm) < 1e-6;
+  const noWorse = Math.min(after.firstRowMm, after.lastRowMm)
+                > Math.min(before.firstRowMm, before.lastRowMm);
+  return bothEqual && noWorse && Math.abs(after.firstRowMm - 135) < 1e-6
+    ? `${Math.round(before.firstRowMm)}/${Math.round(before.lastRowMm)} became 135mm at both ends`
+    : fail(`${before.firstRowMm}/${before.lastRowMm} became ${after.firstRowMm}/${after.lastRowMm}`);
+});
+
+check('turning the planks moves which walls the ripped rows are against', () => {
+  const f = layIn(4000, 2000, {plankLen:1220, plankWid:190, gap:10});
+  const across = api.floorTotals(f);
+  f.horiz = false;
+  const down = api.floorTotals(f);
+  return across.firstRowWall === 'top' && across.lastRowWall === 'bottom'
+    && down.firstRowWall === 'left' && down.lastRowWall === 'right'
+    ? `top/bottom when the planks run across, left/right when they run up`
+    : fail(`${across.firstRowWall}/${across.lastRowWall} then ${down.firstRowWall}/${down.lastRowWall}`);
+});
+
+check('showing the flooring panel does not change the floor', () => {
+  // The panel writes the layout back through its own fields, so a rounding slip in
+  // any of them would quietly move the pattern every time the sidebar redrew.
+  const f = layIn(4000, 2000, {plankLen:1220, plankWid:190, gap:10});
+  api.setFirstRowWidth(f, 135);
+  const before = JSON.stringify(api.floorTotals(f).rows.map(r => [r.cLo, r.cHi, r.jointBase]));
+  api.selectedItem = f;
+  api.refreshFloorPanel();
+  api.showSelected();
+  api.drawPlan();
+  api.refreshSchedule();
+  const after = JSON.stringify(api.floorTotals(f).rows.map(r => [r.cLo, r.cHi, r.jointBase]));
+  return before === after
+    ? `panel, sidebar, plan and schedule all rendered with the layout untouched`
+    : fail('rendering the panel moved the pattern');
+});
+
+check('re-applying every panel field leaves the floor where it was', () => {
+  const f = layIn(4000, 2000, {plankLen:1220, plankWid:190, gap:10});
+  api.setFirstRowWidth(f, 135);
+  const t = api.floorTotals(f);
+  const before = `${Math.round(t.firstRowMm)}/${Math.round(t.lastRowMm)}/${t.planksUsed}`;
+  // Exactly what a change event on each field would do with its displayed value.
+  api.setFirstRowWidth(f, Math.round(t.firstRowMm));
+  api.setLastRowWidth(f, Math.round(api.floorTotals(f).lastRowMm));
+  const t2 = api.floorTotals(f);
+  const after = `${Math.round(t2.firstRowMm)}/${Math.round(t2.lastRowMm)}/${t2.planksUsed}`;
+  return before === after
+    ? `first and last row fields both idempotent at ${before}`
+    : fail(`${before} became ${after}`);
 });
 
 check('a sliver of a plank at a wall is flagged and tinted red', () => {
