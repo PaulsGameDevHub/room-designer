@@ -15,6 +15,9 @@ const drawCalls = {};
 const strokeLog = [];
 // Every label drawn, so a test can assert what the plan actually reads.
 const textLog = [];
+// Every path point, so a test can assert that a dimension line actually spans
+// what its label claims — the two can disagree, and did.
+const pathLog = [];
 const STYLE = ['font','fillStyle','strokeStyle','lineWidth','textAlign','textBaseline','lineJoin','_dash'];
 function ctxStub(){
   const stack = [];
@@ -45,6 +48,7 @@ function ctxStub(){
       if(m === 'rect' || m === 'roundRect') c._rects++;
       if(m === 'moveTo' || m === 'lineTo') c._segs++;
       if(m === 'fillText') textLog.push(String(a[0]));
+      if(m === 'moveTo' || m === 'lineTo') pathLog.push({m, x:a[0], y:a[1]});
       if(m === 'stroke') strokeLog.push({
         strokeStyle:c.strokeStyle, lineWidth:c.lineWidth, dashed:(c._dash||[]).length > 0,
         rects:c._rects||0, segs:c._segs||0});
@@ -3255,6 +3259,57 @@ check('net wall area subtracts exactly the opening areas', () => {
     return fail(`net ${s.netWallAreaMm2} != gross ${s.wallAreaMm2} - ${expect}`);
   return `gross ${(s.wallAreaMm2/1e6).toFixed(2)}m2 less ${(expect/1e6).toFixed(2)}m2 `
     + `of openings = ${(s.netWallAreaMm2/1e6).toFixed(2)}m2`;
+});
+
+check('the overall dimension line spans what its label says', () => {
+  // roomW is the inside measurement, so the arrows have to reach between the
+  // inside faces. The line used to span the outside of the 100mm walls while
+  // reading the inside figure — 200mm of drawing that the number did not cover.
+  emptyRoom({roomW:4000, roomH:2000});
+  pathLog.length = 0;
+  api.drawPlan();
+  const inside = {x1:api.toC(0,0).x, x2:api.toC(4000,0).x, y1:api.toC(0,0).y, y2:api.toC(0,2000).y};
+  // The dimension line sits above the room; find the widest horizontal run there.
+  let widest = null;
+  for(let i=1; i<pathLog.length; i++){
+    const a = pathLog[i-1], b = pathLog[i];
+    if(b.m !== 'lineTo' || Math.abs(a.y-b.y) > 0.01 || a.y >= inside.y1) continue;
+    const span = Math.abs(b.x-a.x);
+    if(!widest || span > widest.span) widest = {span, lo:Math.min(a.x,b.x), hi:Math.max(a.x,b.x)};
+  }
+  if(!widest) return fail('no horizontal dimension line found above the room');
+  const wantSpan = inside.x2 - inside.x1;
+  const outerSpan = wantSpan + 2*100*api.scale;
+  return Math.abs(widest.span - wantSpan) < 0.5
+    ? `the 4m arrow spans ${widest.span.toFixed(1)}px, exactly the inside width `
+      + `(the outside would be ${outerSpan.toFixed(1)}px)`
+    : fail(`arrow spans ${widest.span.toFixed(1)}px, inside is ${wantSpan.toFixed(1)}px `
+      + `and outside ${outerSpan.toFixed(1)}px`);
+});
+
+check('the PDF measures the inside too', () => {
+  emptyRoom({roomW:4000, roomH:2000});
+  const p = api.planPage(50);
+  const k = p.k, X = mm => p.ox + mm*k;
+  // The width dimension is the long horizontal line above the plan; its length in
+  // points must be the inside width at the drawing scale, not the outer envelope.
+  const want = (X(4000) - X(0));
+  const outer = want + 2*100*k;
+  const lines = p.content.split('\n');
+  let found = null;
+  for(let i=0; i<lines.length-1; i++){
+    const m1 = /^([\d.]+) ([\d.]+) m$/.exec(lines[i]);
+    const m2 = /^([\d.]+) ([\d.]+) l$/.exec(lines[i+1]);
+    if(!m1 || !m2) continue;
+    const [x1,y1] = [+m1[1], +m1[2]], [x2,y2] = [+m2[1], +m2[2]];
+    if(Math.abs(y1-y2) > 0.01) continue;
+    const span = Math.abs(x2-x1);
+    if(Math.abs(span - want) < 0.5 && (!found || span > found)) found = span;
+    if(Math.abs(span - outer) < 0.5) return fail(`a dimension line spans the outer ${outer.toFixed(1)}pt`);
+  }
+  return found
+    ? `the printed width arrow spans ${found.toFixed(1)}pt, the inside width at 1:50`
+    : fail(`no line of the inside width (${want.toFixed(1)}pt) found in the PDF`);
 });
 
 check('an empty wall is dimensioned once, not twice', () => {

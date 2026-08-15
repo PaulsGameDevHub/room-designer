@@ -275,7 +275,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-15 19:40';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-15 19:51';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -1490,39 +1490,45 @@ function drawDimLine(x1, y1, x2, y2, label, side, hitTag, highlight){
 function drawRoomDims(){
   const col = COL.dim, wt = WALL_T*scale, al = 7;
   const r0 = toC(0,0), r1 = toC(roomW, roomH);
-  const ox1 = r0.x-wt, oy1 = r0.y-wt, ox2 = r1.x+wt, oy2 = r1.y+wt;
+  // The room size is the inside measurement everywhere else in the app, so the
+  // arrows have to reach between the inside faces. They used to span the outside
+  // of the 100mm walls while reading the inside figure, which put the line
+  // 200mm wider than the number it was labelled with.
+  const ix1 = r0.x, iy1 = r0.y, ix2 = r1.x, iy2 = r1.y;
+  // The line itself still sits clear of the wall band; only its extent changed.
+  const oy1 = r0.y-wt, oy2 = r1.y+wt, ox1 = r0.x-wt;
   ctx.font = '11px var(--font)';
 
   const dimY = oy1 - DIM_OFFSET;
   ctx.strokeStyle = col; ctx.lineWidth = 0.8; ctx.setLineDash([3,3]);
-  ctx.beginPath(); ctx.moveTo(ox1,oy1); ctx.lineTo(ox1,dimY-8); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(ox2,oy1); ctx.lineTo(ox2,dimY-8); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ix1,iy1); ctx.lineTo(ix1,dimY-8); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ix2,iy1); ctx.lineTo(ix2,dimY-8); ctx.stroke();
   ctx.setLineDash([]);
-  ctx.beginPath(); ctx.moveTo(ox1,dimY); ctx.lineTo(ox2,dimY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ix1,dimY); ctx.lineTo(ix2,dimY); ctx.stroke();
   ctx.beginPath();
-  ctx.moveTo(ox1,dimY); ctx.lineTo(ox1+al*0.6, dimY-al*0.35);
-  ctx.moveTo(ox1,dimY); ctx.lineTo(ox1+al*0.6, dimY+al*0.35);
-  ctx.moveTo(ox2,dimY); ctx.lineTo(ox2-al*0.6, dimY-al*0.35);
-  ctx.moveTo(ox2,dimY); ctx.lineTo(ox2-al*0.6, dimY+al*0.35);
+  ctx.moveTo(ix1,dimY); ctx.lineTo(ix1+al*0.6, dimY-al*0.35);
+  ctx.moveTo(ix1,dimY); ctx.lineTo(ix1+al*0.6, dimY+al*0.35);
+  ctx.moveTo(ix2,dimY); ctx.lineTo(ix2-al*0.6, dimY-al*0.35);
+  ctx.moveTo(ix2,dimY); ctx.lineTo(ix2-al*0.6, dimY+al*0.35);
   ctx.stroke();
-  const lbl = fmtD(roomW), tw = ctx.measureText(lbl).width+10, bh = 18, mx = (ox1+ox2)/2;
+  const lbl = fmtD(roomW), tw = ctx.measureText(lbl).width+10, bh = 18, mx = (ix1+ix2)/2;
   ctx.fillStyle = 'rgba(24,24,24,0.9)';
   ctx.beginPath(); ctx.roundRect(mx-tw/2, dimY-bh/2, tw, bh, 4); ctx.fill();
   ctx.strokeStyle = col; ctx.lineWidth = 0.8; ctx.stroke();
   ctx.fillStyle = col; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(lbl, mx, dimY);
 
-  const dimX = ox1 - DIM_OFFSET, myV = (oy1+oy2)/2;
+  const dimX = ox1 - DIM_OFFSET, myV = (iy1+iy2)/2;
   ctx.strokeStyle = col; ctx.lineWidth = 0.8; ctx.setLineDash([3,3]);
-  ctx.beginPath(); ctx.moveTo(ox1,oy1); ctx.lineTo(dimX-8,oy1); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(ox1,oy2); ctx.lineTo(dimX-8,oy2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ix1,iy1); ctx.lineTo(dimX-8,iy1); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ix1,iy2); ctx.lineTo(dimX-8,iy2); ctx.stroke();
   ctx.setLineDash([]);
-  ctx.beginPath(); ctx.moveTo(dimX,oy1); ctx.lineTo(dimX,oy2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(dimX,iy1); ctx.lineTo(dimX,iy2); ctx.stroke();
   ctx.beginPath();
-  ctx.moveTo(dimX,oy1); ctx.lineTo(dimX-al*0.35, oy1+al*0.6);
-  ctx.moveTo(dimX,oy1); ctx.lineTo(dimX+al*0.35, oy1+al*0.6);
-  ctx.moveTo(dimX,oy2); ctx.lineTo(dimX-al*0.35, oy2-al*0.6);
-  ctx.moveTo(dimX,oy2); ctx.lineTo(dimX+al*0.35, oy2-al*0.6);
+  ctx.moveTo(dimX,iy1); ctx.lineTo(dimX-al*0.35, iy1+al*0.6);
+  ctx.moveTo(dimX,iy1); ctx.lineTo(dimX+al*0.35, iy1+al*0.6);
+  ctx.moveTo(dimX,iy2); ctx.lineTo(dimX-al*0.35, iy2-al*0.6);
+  ctx.moveTo(dimX,iy2); ctx.lineTo(dimX+al*0.35, iy2-al*0.6);
   ctx.stroke();
   const lbl2 = fmtD(roomH), tw2 = ctx.measureText(lbl2).width+10;
   ctx.save();
@@ -6684,7 +6690,10 @@ function planPage(denom){
   // Title block
   pdfTitleBlock(g, pw, ph, margin, blockH, denom, fitted, paper);
 
-  return {w:pw, h:ph, content:g.build(), denom, paper, fitted};
+  // k and the origin come back so the page's geometry can be checked against real
+  // millimetres, not just its bytes — a dimension line that spans the wrong extent
+  // is a valid PDF saying the wrong thing.
+  return {w:pw, h:ph, content:g.build(), denom, paper, fitted, k, ox, oyTop};
 }
 
 // Choose the arc end angle that gives the intended sweep direction.
@@ -6732,13 +6741,15 @@ function pdfOverallDims(g, X, Y, k){
   const wt = WALL_T*k, off = 30, tick = 4;
   g.ink(INK.dim).fill(INK.dim).lw(0.5);
 
-  // Width, above
+  // Width, above. Measured between the inside faces, because roomW is the inside
+  // measurement — spanning the outside of the walls would print a line 200mm
+  // longer than the figure labelling it, at a stated scale.
   const yTop = Y(0) + wt + off;
   g.dash([2,2]);
-  g.line(X(0)-wt, Y(0)+wt, X(0)-wt, yTop+tick);
-  g.line(X(roomW)+wt, Y(0)+wt, X(roomW)+wt, yTop+tick);
+  g.line(X(0), Y(0), X(0), yTop+tick);
+  g.line(X(roomW), Y(0), X(roomW), yTop+tick);
   g.dash(null);
-  g.line(X(0)-wt, yTop, X(roomW)+wt, yTop);
+  g.line(X(0), yTop, X(roomW), yTop);
   const wLbl = fmtD(roomW), wTw = textWidthPt(wLbl, 8, true);
   g.fill(INK.white).re((X(0)+X(roomW))/2 - wTw/2 - 3, yTop-4, wTw+6, 9).f();
   g.fill(INK.dim).text((X(0)+X(roomW))/2, yTop-2.9, 8, wLbl, {align:'c', bold:true});
@@ -6746,10 +6757,10 @@ function pdfOverallDims(g, X, Y, k){
   // Depth, to the left
   const xLeft = X(0) - wt - off;
   g.dash([2,2]);
-  g.line(X(0)-wt, Y(0)+wt, xLeft-tick, Y(0)+wt);
-  g.line(X(0)-wt, Y(roomH)-wt, xLeft-tick, Y(roomH)-wt);
+  g.line(X(0), Y(0), xLeft-tick, Y(0));
+  g.line(X(0), Y(roomH), xLeft-tick, Y(roomH));
   g.dash(null);
-  g.line(xLeft, Y(0)+wt, xLeft, Y(roomH)-wt);
+  g.line(xLeft, Y(0), xLeft, Y(roomH));
   const hLbl = fmtD(roomH), hTw = textWidthPt(hLbl, 8, true);
   const midY = (Y(0)+Y(roomH))/2;
   g.fill(INK.white).re(xLeft-4.5, midY - hTw/2 - 3, 9, hTw+6).f();
