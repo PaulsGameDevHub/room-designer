@@ -9,3 +9,6 @@ desktop.ini
 *-plan.pdf
 *-plan.png
 *-elevation.png
+
+# Written by test/run.js so a real PDF reader can be pointed at the output
+out.pdf
