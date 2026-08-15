@@ -77,16 +77,37 @@ a fitter actually does, and it is why the direction and the starting point chang
 total — the same room can want two or three planks more or fewer depending on how it
 is set out.
 
-**End joints in touching rows are kept at least 300mm apart**, which is the rule every
-laminate manufacturer asks for. It is enforced on the lay itself rather than left to
-the stagger pattern to get right: letting the offcut decide is what makes a floor look
-natural, but on some room sizes it puts a joint straight on top of the one below. The
-schedule reports the closest joint on the floor so the rule can be checked, and the
-minimum is editable if a particular product asks for more.
+### How the rows are staggered
+
+Two things have to be avoided, and they pull against each other.
+
+**Joints too close together.** End joints in touching rows are kept at least **300mm**
+apart, which is the rule every laminate manufacturer asks for. And a joint must not
+land back on one **two rows up** — that draws an H across the floor with the middle row
+as its bar. Both are enforced on the lay itself rather than left to the stagger pattern
+to get right: letting the offcut decide is what makes a floor look natural, but on some
+room sizes it drops a joint straight onto the one below.
+
+**Rows marching in step.** A strict half or third plank breaks no rule and still steps
+the same amount every row, running a staircase of joints diagonally across the floor.
+It reads as obviously machine-laid. Rules alone cannot prevent this, because a rule
+satisfied the same way every time *is* a repeating pattern — so the rules decide what is
+allowed and a fixed pseudo-random pick decides where in the allowed range each row goes.
+Seeded on the row number, so a floor is the same floor every time it is drawn.
+
+The three stagger settings are therefore a **preference for where a row would like to
+start**, not a promise about the geometry; the rules always have the final say. The
+schedule reports the closest joint in touching rows and two rows up, so both can be
+checked rather than taken on trust, and both minimums are editable.
 
 Joints sit on a lattice one plank long, so they can never be more than **half a plank**
-apart — a 300mm rule needs planks of at least 600mm. Ask for more than the plank can
-give and it says so, and lays to the best it can manage rather than pretending.
+apart in touching rows, nor more than **a third** across three rows at once — a 300mm
+rule needs planks of at least 600mm. Ask for more than the plank can give and it says
+so, and lays to the best it can manage rather than pretending.
+
+Laying properly is not quite free. A room that divides exactly, like 4000 × 2000 in
+1000 × 500 planks, could be laid in exactly 16 planks with no waste at all — by putting
+every joint on the one below and the one two above. Done correctly it takes 17.
 
 **Find the best pattern** tries 144 layouts — both directions, three stagger patterns,
 six joint positions along a row and four places to split the rows — and keeps the one

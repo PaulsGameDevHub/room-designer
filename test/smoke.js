@@ -1473,20 +1473,31 @@ check('one click lays a floor with sensible defaults', () => {
     : fail(`${f.plankLen}×${f.plankWid} perBox=${f.perBox} horiz=${f.horiz} underUnits=${f.underUnits}`);
 });
 
-check('a floor that divides exactly still costs only the planks it should', () => {
-  // 4000 × 2000 in 1000 × 500 planks is four rows of four. Laying every row the
-  // same would use no cuts at all — and stack every joint on the one below, which
-  // the stagger rule forbids. So rows alternate: whole planks, then a 300 start
-  // and a 700 finish which the offcut covers. Four cuts, but still 16 planks and
-  // still not a millimetre wasted.
+check('a floor that divides exactly stays within a plank of the theoretical floor', () => {
+  // 4000 × 2000 of 1000 × 500 planks is exactly 16 planks of material, and no lay
+  // can beat that. Laying every row identically would hit it precisely — and put
+  // every joint on the one below and the one two above, which is the pattern the
+  // rules exist to prevent. So the honest target is not "16" but "16, or one more
+  // than 16 as the price of a floor that is laid properly".
   const f = layIn(4000, 2000, {plankLen:1000, plankWid:500});
   const t = api.floorTotals(f);
-  const joints = api.layFloor(f).rows.map(r => rowJoints(r).map(Math.round).join('/'));
-  if(t.planksUsed !== 16 || Math.abs(t.netMm2 - 8e6) < 1 === false)
-    return fail(`${t.planksUsed} planks, ${t.netMm2}mm²`);
-  return t.cuts === 4 && t.offcutMm2 < 1 && joints[0] === '1000/2000/3000' && joints[1] === '300/1300/2300/3300'
-    ? `16 planks, 4 cut, nothing wasted — rows go ${joints[0]} then ${joints[1]}`
-    : fail(`${t.cuts} cuts, ${t.offcutMm2}mm² offcut, joints ${joints.slice(0,2).join(' then ')}`);
+  const floorPlanks = Math.ceil(8e6 / (1000*500));
+  if(Math.abs(t.netMm2 - 8e6) > 1) return fail(`covered ${t.netMm2}mm², expected 8000000`);
+  return t.planksUsed >= floorPlanks && t.planksUsed <= floorPlanks + 1
+    ? `${t.planksUsed} planks against a theoretical ${floorPlanks}, covering the full 8.00m²`
+    : fail(`${t.planksUsed} planks against a theoretical ${floorPlanks}`);
+});
+
+check('the whole floor wastes less than a single plank', () => {
+  // Before the stagger rules this room came out at exactly zero waste — but only
+  // by laying the pattern that stacks joints. One plank of offcut across a nine
+  // square metre floor is what laying it correctly costs.
+  const f = layIn(4500, 2000, {plankLen:1000, plankWid:500});
+  const t = api.floorTotals(f);
+  const onePlank = 1000*500;
+  return t.offcutMm2 <= onePlank + 1 && Math.abs(t.netMm2 - 9e6) < 1
+    ? `${(t.offcutMm2/onePlank).toFixed(2)} planks of offcut across a 9.00m² floor`
+    : fail(`${t.offcutMm2}mm² offcut (a plank is ${onePlank}mm²), covering ${t.netMm2}mm²`);
 });
 
 check('starting each row with the offcut saves planks', () => {
@@ -1501,27 +1512,21 @@ check('starting each row with the offcut saves planks', () => {
   const withReuse = api.floorTotals(f).planksUsed;
   f.minUse = 9999;                  // nothing is ever worth keeping
   const without = api.floorTotals(f).planksUsed;
-  return withReuse === 18 && without === 22
-    ? `18 planks using the offcuts, 22 throwing them away`
-    : fail(`${withReuse} with reuse, ${without} without — expected 18 and 22`);
-});
-
-check('the offcut floor wastes nothing, and the numbers agree', () => {
-  const f = layIn(4500, 2000, {plankLen:1000, plankWid:500});
-  const t = api.floorTotals(f);
-  const bought = t.planksUsed * f.plankLen * f.plankWid;
-  return Math.abs(t.netMm2 - 9e6) < 1 && Math.abs(bought - t.netMm2) < 1 && t.offcutMm2 < 1
-    ? `9.00m² of floor from 9.00m² of planks — every offcut used`
-    : fail(`net ${t.netMm2}, bought ${bought}, offcut ${t.offcutMm2}`);
+  return withReuse < without
+    ? `${withReuse} planks using the offcuts, ${without} throwing them away`
+    : fail(`${withReuse} with reuse, ${without} without — reuse saved nothing`);
 });
 
 check('boxes are worked out from planks and the waste allowance', () => {
+  // Pinned to the arithmetic rather than to a plank count, because the count is
+  // whatever the stagger rules make it and the sum is the thing being tested.
   const f = layIn(4500, 2000, {plankLen:1000, plankWid:500, perBox:8, waste:10});
   const t = api.floorTotals(f);
-  // 18 planks + 10% = 19.8, rounded up to 20, which is three boxes of eight.
-  return t.planksUsed === 18 && t.planksWithWaste === 20 && t.boxes === 3
-    ? `18 planks becomes 20 with 10% waste, so 3 boxes of 8`
-    : fail(`${t.planksUsed} planks, ${t.planksWithWaste} with waste, ${t.boxes} boxes`);
+  const wanted = Math.ceil(t.planksUsed * 1.1);
+  const boxes = Math.ceil(wanted / 8);
+  return t.planksWithWaste === wanted && t.boxes === boxes
+    ? `${t.planksUsed} planks becomes ${wanted} with 10% waste, so ${boxes} boxes of 8`
+    : fail(`${t.planksUsed} planks, ${t.planksWithWaste} with waste (expected ${wanted}), ${t.boxes} boxes (expected ${boxes})`);
 });
 
 check('a kitchen unit is cut around, not floored under', () => {
@@ -1697,13 +1702,16 @@ check('a room file saved before flooring existed loads without one', () => {
     : fail(`got ${JSON.stringify(api.floor)}`);
 });
 
-check('the schedule reports the flooring order', () => {
+check('the schedule reports the same order as the panel', () => {
   const f = layIn(4500, 2000, {plankLen:1000, plankWid:500, perBox:8, waste:10});
+  const t = api.floorTotals(f);
   const s = api.computeSchedule();
   if(!s.flooring) return fail('no flooring section');
-  return s.flooring.boxes === 3 && s.flooring.planksUsed === 18
-    ? `18 planks, 3 boxes, ${(s.flooring.netMm2/1e6).toFixed(2)}m² covered`
-    : fail(`${s.flooring.planksUsed} planks, ${s.flooring.boxes} boxes`);
+  const same = ['planksUsed','planksWithWaste','boxes','netMm2','cuts']
+    .every(k => s.flooring[k] === t[k]);
+  return same && s.flooring.boxes > 0
+    ? `${s.flooring.planksUsed} planks, ${s.flooring.boxes} boxes, ${(s.flooring.netMm2/1e6).toFixed(2)}m² — matching the panel exactly`
+    : fail(`schedule ${JSON.stringify({p:s.flooring.planksUsed, b:s.flooring.boxes})} vs panel ${JSON.stringify({p:t.planksUsed, b:t.boxes})}`);
 });
 
 check('no floor means no flooring section anywhere', () => {
@@ -1717,18 +1725,33 @@ check('no floor means no flooring section anywhere', () => {
 });
 
 // Measured off the drawn planks rather than off the lattice the layout works in,
-// so this checks the floor that actually gets laid.
-function closestJoint(lay){
+// so this checks the floor that actually gets laid. n=1 is the stagger between
+// touching rows; n=2 is the H-joint, where a joint lands back on one two rows up
+// and draws an H with the row between as its bar.
+function closestJoint(lay, n = 1){
   let worst = Infinity, where = null;
-  for(let i=1; i<lay.rows.length; i++){
+  for(let i=n; i<lay.rows.length; i++){
     for(const a of rowJoints(lay.rows[i])){
-      for(const b of rowJoints(lay.rows[i-1])){
+      for(const b of rowJoints(lay.rows[i-n])){
         const d = Math.abs(a-b);
-        if(d < worst){ worst = d; where = `row ${i} at ${Math.round(a)} vs row ${i-1} at ${Math.round(b)}`; }
+        if(d < worst){ worst = d; where = `row ${i} at ${Math.round(a)} vs row ${i-n} at ${Math.round(b)}`; }
       }
     }
   }
   return {worst, where};
+}
+
+// How machine-laid a floor looks: the share of rows that step by the commonest
+// amount. A strict half or third scores 1 — every row marching in step, which
+// draws a staircase of joints diagonally across the floor.
+function marchShare(lay, len){
+  const m = (v,mm) => ((v%mm)+mm)%mm;
+  const bases = lay.rows.map(r => Math.round(m(r.jointBase, len)));
+  const steps = bases.slice(1).map((b,i) => Math.round(m(b - bases[i], len)));
+  if(!steps.length) return 0;
+  const tally = new Map();
+  for(const s of steps) tally.set(s, (tally.get(s)||0)+1);
+  return Math.max(...tally.values())/steps.length;
 }
 
 check('joints in touching rows are never closer than 300mm', () => {
@@ -1747,6 +1770,45 @@ check('joints in touching rows are never closer than 300mm', () => {
   return worst >= 300 - 1e-6
     ? `${checked} floors swept, closest joint anywhere was ${Math.round(worst)}mm`
     : fail(`${Math.round(worst)}mm apart — ${worstAt}`);
+});
+
+check('no joint ever lands back on one two rows up — no H pattern', () => {
+  // This is the failure the reference picture calls out. Before the rule went in,
+  // a strict half plank produced 162 exact H-joints in an 8220x5050 room, and the
+  // offcut pattern produced them in three rooms out of five.
+  const rooms = [[4200,3000],[4780,3160],[4000,2000],[5000,4000],[8220,5050],[6100,3050]];
+  let worst = Infinity, worstAt = null, exact = 0, checked = 0;
+  for(const stagger of ['offcut','half','third']){
+    for(const [w,h] of rooms){
+      const lay = api.layFloor(layIn(w, h, {plankLen:1220, plankWid:190, gap:10, stagger}));
+      const c = closestJoint(lay, 2);
+      for(let i=2; i<lay.rows.length; i++)
+        for(const a of rowJoints(lay.rows[i]))
+          for(const b of rowJoints(lay.rows[i-2])) if(Math.abs(a-b) < 1) exact++;
+      checked++;
+      if(c.worst < worst){ worst = c.worst; worstAt = `${w}x${h} ${stagger}: ${c.where}`; }
+    }
+  }
+  return exact === 0 && worst >= 150 - 1e-6
+    ? `${checked} floors swept, no H-joints at all, closest approach two rows up ${Math.round(worst)}mm`
+    : fail(`${exact} exact H-joints, closest ${Math.round(worst)}mm — ${worstAt}`);
+});
+
+check('the rows do not march in step and draw a staircase', () => {
+  // The other half of the picture. A strict third kept every rule and still
+  // stepped 407mm every single row, which reads as obviously machine-laid.
+  const rooms = [[4200,3000],[4780,3160],[5000,4000],[8220,5050]];
+  let worst = 0, worstAt = null;
+  for(const stagger of ['offcut','half','third']){
+    for(const [w,h] of rooms){
+      const f = layIn(w, h, {plankLen:1220, plankWid:190, gap:10, stagger});
+      const share = marchShare(api.layFloor(f), 1220);
+      if(share > worst){ worst = share; worstAt = `${w}x${h} ${stagger}`; }
+    }
+  }
+  return worst <= 0.5
+    ? `worst case ${Math.round(worst*100)}% of rows sharing a step, in ${worstAt}`
+    : fail(`${Math.round(worst*100)}% of rows step by the same amount in ${worstAt}`);
 });
 
 check('the rule holds for plank sizes that are awkward about it', () => {
