@@ -275,7 +275,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-15 19:32';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-15 19:40';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -1545,10 +1545,14 @@ function drawSubDivDims(){
   ctx.font = '10px var(--font)';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
 
+  // drawRoomDims puts the overall size along the top and left only, so a chain on
+  // one of those walls that nothing has split would print the same figure twice.
+  // The bottom and right carry no overall, so their single segment is the only
+  // dimension those walls get and has to stay.
   const walls = [
-    {id:'top',    axis:'h', dimY:oy1-OFF},
+    {id:'top',    axis:'h', dimY:oy1-OFF, overall:true},
     {id:'bottom', axis:'h', dimY:oy2+OFF},
-    {id:'left',   axis:'v', dimX:ox1-OFF},
+    {id:'left',   axis:'v', dimX:ox1-OFF, overall:true},
     {id:'right',  axis:'v', dimX:ox2+OFF},
   ];
 
@@ -1572,6 +1576,9 @@ function drawSubDivDims(){
         }
         ctx.stroke();
       }else{
+        const wallLen = wall.axis === 'h' ? roomW : roomH;
+        const spansWholeWall = mmA <= 0.5 && mmB >= wallLen - 0.5;
+        if(wall.overall && spansWholeWall) continue;   // the overall already says it
         subDim(pxA, pxB, coord, wall.axis, fmtD(Math.round(mmB-mmA)), col);
       }
     }

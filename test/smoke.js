@@ -13,6 +13,8 @@ const drawCalls = {};
 // Every stroke records the style it was drawn with, so a test can assert how
 // something looks and not merely that it was drawn at all.
 const strokeLog = [];
+// Every label drawn, so a test can assert what the plan actually reads.
+const textLog = [];
 const STYLE = ['font','fillStyle','strokeStyle','lineWidth','textAlign','textBaseline','lineJoin','_dash'];
 function ctxStub(){
   const stack = [];
@@ -42,6 +44,7 @@ function ctxStub(){
       if(m === 'beginPath'){ c._rects = 0; c._segs = 0; }
       if(m === 'rect' || m === 'roundRect') c._rects++;
       if(m === 'moveTo' || m === 'lineTo') c._segs++;
+      if(m === 'fillText') textLog.push(String(a[0]));
       if(m === 'stroke') strokeLog.push({
         strokeStyle:c.strokeStyle, lineWidth:c.lineWidth, dashed:(c._dash||[]).length > 0,
         rects:c._rects||0, segs:c._segs||0});
@@ -3252,6 +3255,44 @@ check('net wall area subtracts exactly the opening areas', () => {
     return fail(`net ${s.netWallAreaMm2} != gross ${s.wallAreaMm2} - ${expect}`);
   return `gross ${(s.wallAreaMm2/1e6).toFixed(2)}m2 less ${(expect/1e6).toFixed(2)}m2 `
     + `of openings = ${(s.netWallAreaMm2/1e6).toFixed(2)}m2`;
+});
+
+check('an empty wall is dimensioned once, not twice', () => {
+  // The overall room size runs along the top and left only. The wall chain runs
+  // along all four, and a wall nothing has split gives one segment the length of
+  // the whole wall — so the top and left used to print the same figure twice
+  // while the bottom and right printed it once.
+  emptyRoom({roomW:4000, roomH:2000});
+  document.getElementById('show-dims').checked = true;
+  textLog.length = 0;
+  api.drawPlan();
+  const w = textLog.filter(t => t === '4m').length;
+  const h = textLog.filter(t => t === '2m').length;
+  // One overall plus one chain on the opposite wall, in each direction.
+  return w === 2 && h === 2
+    ? `4m appears twice (overall on top, chain on the bottom) and 2m twice (left, right)`
+    : fail(`"4m" drawn ${w} times and "2m" ${h} times, expected 2 and 2`);
+});
+
+check('a wall that is split still shows its full chain', () => {
+  // The suppression must only fire when nothing has divided the wall, or a real
+  // chain would lose its first or last figure.
+  emptyRoom({roomW:4000, roomH:2000});
+  document.getElementById('show-dims').checked = true;
+  const p = api.addWallPiece();
+  const wp = api.wallPieces[api.wallPieces.length-1];
+  wp.horiz = true; wp.len = 1000; wp.thick = 100;
+  wp.cx = 2000; wp.cy = 50;
+  api.reSnap(wp, api.wallPieces.indexOf(wp));
+  const chain = api.wallChain('top').segs.filter(s => !s.isGap);
+  textLog.length = 0;
+  api.drawPlan();
+  const drawn = chain.map(s => Math.round(s.mmB - s.mmA))
+    .filter(mm => mm > 0)
+    .every(mm => textLog.includes(mm >= 1000 ? (mm/1000).toFixed(3).replace(/\.?0+$/,'')+'m' : mm+'mm'));
+  return chain.length > 1 && drawn
+    ? `the split top wall still prints all ${chain.length} of its segments`
+    : fail(`${chain.length} segments, all drawn = ${drawn}`);
 });
 
 check('plan renders without throwing', () => { api.drawPlan(); return true; });
