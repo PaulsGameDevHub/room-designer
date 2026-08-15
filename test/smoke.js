@@ -1626,6 +1626,83 @@ check('a whole plank of shift is no shift at all', () => {
     : fail(`ox=${f.ox}, planks ${at0} → ${api.floorTotals(f).planksUsed}`);
 });
 
+check('a sliver of a plank at a wall is flagged and tinted red', () => {
+  // 4000 long in 1220 planks leaves 4000-10-10 = 3980, which is three whole
+  // planks and a 320 tail — fine. Nudge the pattern along by 300 and that tail
+  // becomes 20mm, which is too little to hold the locking profile.
+  const f = layIn(4000, 2000, {plankLen:1220, plankWid:190, gap:10, minPiece:60, ox:0});
+  const clean = api.floorTotals(f);
+  f.ox = 300;
+  const t = api.floorTotals(f);
+  const lay = api.layFloor(f);
+  const flagged = lay.rows.flatMap(r => r.planks).filter(p => p.slim);
+  if(!flagged.length) return fail('nothing was flagged after shifting the pattern');
+  const allUnder = flagged.every(p => (p.a1-p.a0) < 60 - 1e-6 || (p.cHi-p.cLo) < 60 - 1e-6);
+  return allUnder && t.slimCount === flagged.length && t.narrowestPieceMm < 60
+    ? `${t.slimCount} piece(s) flagged, narrowest ${Math.round(t.narrowestPieceMm)}mm `
+      + `(clean layout had ${clean.slimCount})`
+    : fail(`slimCount=${t.slimCount}, flagged=${flagged.length}, narrowest=${t.narrowestPieceMm}`);
+});
+
+check('a whole row ripped thin against a wall is flagged too', () => {
+  // 190mm planks into a 2000 deep room leave 1980 to cover: ten rows of 190 and
+  // an 80 remainder. Shift the rows by 40 and the last one is 40mm — a rip that
+  // narrow is as awkward as a short end piece, and every plank in it counts.
+  const f = layIn(4000, 2000, {plankLen:1220, plankWid:190, gap:10, minPiece:60, oy:40});
+  const lay = api.layFloor(f);
+  const thinRows = lay.rows.filter(r => (r.cHi - r.cLo) < 60 - 1e-6);
+  const t = api.floorTotals(f);
+  if(!thinRows.length) return fail('no thin row was produced by the fixture');
+  const allMarked = thinRows.every(r => r.planks.every(p => p.slim));
+  return allMarked && t.slimRows === thinRows.length
+    ? `${t.slimRows} row(s) under 60mm, every plank in them marked — thinnest ${Math.round(t.narrowestRowMm)}mm`
+    : fail(`slimRows=${t.slimRows}, found ${thinRows.length}, all marked=${allMarked}`);
+});
+
+check('nothing is flagged on a floor that sets out cleanly', () => {
+  // 4000 x 2000 in 1000 x 500 planks divides exactly with no gap, so every piece
+  // is a whole plank or a decent fraction of one.
+  const f = layIn(4000, 2000, {plankLen:1000, plankWid:500, gap:0, minPiece:60});
+  const t = api.floorTotals(f);
+  const lay = api.layFloor(f);
+  return t.slimCount === 0 && !lay.rows.flatMap(r => r.planks).some(p => p.slim)
+    ? `no piece under 60mm — narrowest cut ${Math.round(t.narrowestPieceMm)}mm, thinnest row ${Math.round(t.narrowestRowMm)}mm`
+    : fail(`${t.slimCount} flagged on a floor that divides exactly`);
+});
+
+check('the threshold is the user’s to set', () => {
+  const f = layIn(4000, 2000, {plankLen:1220, plankWid:190, gap:10, minPiece:60, ox:0});
+  const at60 = api.floorTotals(f).slimCount;
+  f.minPiece = 400;                       // absurdly fussy, to prove it is honoured
+  const at400 = api.floorTotals(f).slimCount;
+  f.minPiece = 0;                         // switched off
+  const at0 = api.floorTotals(f).slimCount;
+  return at400 > at60 && at0 === 0
+    ? `${at60} flagged at a 60mm rule, ${at400} at 400mm, none at 0`
+    : fail(`60mm:${at60} 400mm:${at400} 0mm:${at0}`);
+});
+
+check('the search clears the thin cuts before it saves planks', () => {
+  // Every room measured has a layout with no thin cuts at all, costing at most
+  // two planks to reach — which is the trade a fitter makes without thinking.
+  const rooms = [[4200,3000],[5000,4000],[6100,3050],[3600,2400],[4000,2000]];
+  const notes = [];
+  for(const [w,h] of rooms){
+    const f = layIn(w, h, {plankLen:1220, plankWid:190, gap:10, minPiece:60});
+    const before = api.floorTotals(f);
+    const best = api.bestFloorPattern(f);
+    Object.assign(f, {horiz:best.horiz, stagger:best.stagger, ox:best.ox, oy:best.oy});
+    const after = api.floorTotals(f);
+    if(after.slimCount !== best.slimCount)
+      return fail(`search claimed ${best.slimCount} thin in ${w}x${h}, applying it gave ${after.slimCount}`);
+    if(after.slimCount > before.slimCount)
+      return fail(`search made ${w}x${h} worse: ${before.slimCount} thin became ${after.slimCount}`);
+    if(after.slimCount) return fail(`${w}x${h} left ${after.slimCount} thin cut(s), one exists with none`);
+    notes.push(`${w}x${h} ${before.slimCount}->0`);
+  }
+  return `all cleared — ${notes.join(', ')}`;
+});
+
 check('the best-pattern search finds a layout using fewer planks', () => {
   // 3050 × 2130 in 1220 × 190: running the planks up the room instead of across
   // it is genuinely two planks cheaper, which is the whole point of the button.
@@ -1647,21 +1724,24 @@ check('the best pattern really is the best of the ones tried', () => {
   const f = layIn(4000, 1830, {plankLen:1220, plankWid:190, gap:10});
   const best = api.bestFloorPattern(f);
   const len = f.plankLen, wid = f.plankWid;
-  let lowest = Infinity, tried = 0;
+  // Ranked the way the search ranks: clear the thin cuts first, then save planks.
+  // A layout using one plank fewer but leaving a sliver is not the better one.
+  let lowest = null, tried = 0;
   for(const horiz of [true, false]){
     for(const stagger of ['offcut','half','third']){
       for(const a of [0, len/4, len/3, len/2, 2*len/3, 3*len/4]){
         for(const c of [0, wid/4, wid/2, 3*wid/4]){
           const t = api.floorTotals({...f, horiz, stagger, ox: horiz ? a : c, oy: horiz ? c : a});
-          lowest = Math.min(lowest, t.planksUsed);
+          const key = [t.slimCount, t.planksUsed];
+          if(!lowest || key[0] < lowest[0] || (key[0] === lowest[0] && key[1] < lowest[1])) lowest = key;
           tried++;
         }
       }
     }
   }
-  return best.planksUsed === lowest
-    ? `${tried} layouts tried, the lowest was ${lowest} planks and that is what it chose`
-    : fail(`it chose ${best.planksUsed} but ${lowest} was available across ${tried} layouts`);
+  return best.slimCount === lowest[0] && best.planksUsed === lowest[1]
+    ? `${tried} layouts tried, the best was ${lowest[1]} planks with ${lowest[0]} thin cuts and that is what it chose`
+    : fail(`it chose ${best.planksUsed} planks / ${best.slimCount} thin, but ${lowest[1]} / ${lowest[0]} was available`);
 });
 
 check('the drag grip sits on the floor and can be grabbed', () => {

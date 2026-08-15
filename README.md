@@ -134,10 +134,18 @@ Laying properly is not quite free. A room that divides exactly, like 4000 × 200
 1000 × 500 planks, could be laid in exactly 16 planks with no waste at all — by putting
 every joint on the one below and the one two above. Done correctly it takes 17.
 
-**Find the best pattern** tries 144 layouts — both directions, three stagger patterns,
-six joint positions along a row and four places to split the rows — and keeps the one
-using fewest planks. Splitting the rows matters as much as the joints: a 40mm sliver
-row against a wall still costs a full row of planks, ripped down.
+**Thin cuts at a wall are flagged**, not forbidden. Anything under 60mm is too little to
+hold the locking profile, easy to snap, and it shows — but it cannot always be avoided,
+so those pieces are tinted red on the plan and in the PDF and counted in the schedule.
+Both kinds count: a short piece at the end of a row, and a whole first or last row
+ripped down thin. The threshold is editable, and setting it to 0 turns the warning off.
+
+**Find the best pattern** clears those before it saves planks, because that is what
+setting out a floor is for. Measured over eight rooms, every one has a layout with no
+thin cuts at all and reaching it costs at most two planks. It tries 144 layouts — both directions, three stagger patterns,
+six joint positions along a row and four places to split the rows. Splitting the rows
+matters as much as the joints: a 40mm sliver row against a wall is both a thin cut and a
+full row of planks ripped down to make it.
 
 The pattern is drawn on the floor and **can be dragged**. Grab the round grip on the
 first plank and slide it, or press `R` to turn the planks the other way; a whole

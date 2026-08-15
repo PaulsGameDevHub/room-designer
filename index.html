@@ -275,7 +275,7 @@ const STORE_KEY = 'roomdesigner.autosave.v16';
 // Shown bottom-right so you can tell at a glance which build you are looking at,
 // rather than guessing whether a refresh picked up a new deploy. The line below
 // is rewritten by tools/stamp.js — do not edit it by hand.
-const BUILD = 'v16 · 2026-08-15 19:09';   /*BUILD_STAMP*/
+const BUILD = 'v16 · 2026-08-15 19:21';   /*BUILD_STAMP*/
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Optional features — flip a value here, nothing else, to turn one on or off
@@ -2083,24 +2083,32 @@ function drawFlooring(){
       const w = Math.abs(c2.x-c1.x), h = Math.abs(c2.y-c1.y);
       // A little variation board to board, so a floor reads as boards rather
       // than as a grid. Deterministic, so it does not shimmer when redrawn.
+      // A piece too thin to hold its profile is tinted red instead — a warning,
+      // not a fault, since it cannot always be avoided.
       const shade = 0.055 + ((n*37) % 5) * 0.012;
-      ctx.fillStyle = `rgba(185,139,78,${shade.toFixed(3)})`;
+      ctx.fillStyle = p.slim ? 'rgba(217,83,79,0.34)' : `rgba(185,139,78,${shade.toFixed(3)})`;
       ctx.fillRect(x, y, w, h);
       n++;
     }
   }
   // Joints on top of every fill, so a plank edge is never hidden by its neighbour.
-  ctx.strokeStyle = sel ? COL.sel : 'rgba(185,139,78,0.55)';
-  ctx.lineWidth = sel ? 1.2 : 0.8;
-  ctx.beginPath();
-  for(const row of lay.rows){
-    for(const p of row.planks){
-      const c1 = px(p.a0, row.cLo), c2 = px(p.a1, row.cHi);
-      ctx.rect(Math.min(c1.x,c2.x), Math.min(c1.y,c2.y),
-               Math.abs(c2.x-c1.x), Math.abs(c2.y-c1.y));
+  // Thin pieces are outlined separately so their edge stays red too.
+  for(const slim of [false, true]){
+    ctx.strokeStyle = slim ? 'rgba(217,83,79,0.95)' : sel ? COL.sel : 'rgba(185,139,78,0.55)';
+    ctx.lineWidth = slim ? 1.4 : sel ? 1.2 : 0.8;
+    ctx.beginPath();
+    let any = false;
+    for(const row of lay.rows){
+      for(const p of row.planks){
+        if(!!p.slim !== slim) continue;
+        any = true;
+        const c1 = px(p.a0, row.cLo), c2 = px(p.a1, row.cHi);
+        ctx.rect(Math.min(c1.x,c2.x), Math.min(c1.y,c2.y),
+                 Math.abs(c2.x-c1.x), Math.abs(c2.y-c1.y));
+      }
     }
+    if(any) ctx.stroke();
   }
-  ctx.stroke();
   ctx.restore();
 
   if(view === 'plan') drawFloorHandle(lay);
@@ -3439,6 +3447,11 @@ const FLOOR_DEFAULTS = {
   plankLen: 1220, plankWid: 190, perBox: 8,
   gap: 10,            // expansion gap left at every wall, hidden by beading
   minUse: 300,        // shorter offcuts than this get thrown away, not started with
+  // Anything narrower than this against a wall is awkward: too little to hold the
+  // locking profile, easy to snap, and it shows. Not always avoidable, so it is
+  // flagged rather than forbidden. Covers both a short piece at the end of a row
+  // and a whole row ripped down thin against the top or bottom wall.
+  minPiece: 60,
   minStagger: 300,    // end joints in touching rows never come closer than this
   // Two rows apart, which is the H pattern. Not a published figure like the one
   // above — manufacturers say to avoid H-joints without giving a number — so it
@@ -3467,7 +3480,8 @@ function newFloor(){
     material:'Laminate',
     plankLen:FLOOR_DEFAULTS.plankLen, plankWid:FLOOR_DEFAULTS.plankWid,
     perBox:FLOOR_DEFAULTS.perBox, gap:FLOOR_DEFAULTS.gap,
-    minUse:FLOOR_DEFAULTS.minUse, minStagger:FLOOR_DEFAULTS.minStagger,
+    minUse:FLOOR_DEFAULTS.minUse, minPiece:FLOOR_DEFAULTS.minPiece,
+    minStagger:FLOOR_DEFAULTS.minStagger,
     minStaggerH:FLOOR_DEFAULTS.minStaggerH, waste:FLOOR_DEFAULTS.waste,
     horiz:roomW >= roomH,     // planks normally run the long way
     stagger:'offcut',
@@ -3740,6 +3754,9 @@ function layFloor(f){
   // The last two rows that actually had planks in them, newest first.
   const prev = [null, null];
   let worstStagger = Infinity, worstH = Infinity;
+  const minPiece = Math.max(0, f.minPiece ?? FLOOR_DEFAULTS.minPiece);
+  let slimCount = 0, slimRows = 0;
+  let narrowestPiece = Infinity, narrowestRow = Infinity;
 
   // Silly plank sizes would otherwise lay hundreds of thousands of pieces and
   // hang the frame, so the layout stops rather than the browser.
@@ -3804,11 +3821,22 @@ function layFloor(f){
             }else binnedMm += off;
           }
         }
-        planks.push({a0:a, a1:end, cLo, cHi, cut:need < len - 1e-6, carried:!!from, from});
+        // A piece too thin to hold its locking profile. Both directions count:
+        // a stub at the end of a row, and a whole row ripped down against a wall.
+        const thinEnd = need < minPiece - 1e-6;
+        const thinRow = (cHi - cLo) < minPiece - 1e-6;
+        if(thinEnd || thinRow) slimCount++;
+        // Every cut piece, not only the thin ones, so the reading is still
+        // meaningful on a floor that has no problem to report.
+        if(need < len - 1e-6) narrowestPiece = Math.min(narrowestPiece, need);
+        planks.push({a0:a, a1:end, cLo, cHi, cut:need < len - 1e-6, carried:!!from, from,
+                     slim:thinEnd || thinRow, thinEnd, thinRow});
         a = end;
       }
     }
     if(planks.length){
+      narrowestRow = Math.min(narrowestRow, cHi - cLo);
+      if(cHi - cLo < minPiece - 1e-6) slimRows++;
       if(prev[0] !== null) worstStagger = Math.min(worstStagger, latticeGap(prev[0], jointBase, len));
       if(prev[1] !== null) worstH = Math.min(worstH, latticeGap(prev[1], jointBase, len));
       prev[1] = prev[0];
@@ -3827,6 +3855,10 @@ function layFloor(f){
     binnedMm2: binnedMm * wid,
     rowCount: rows.length,
     alongLo, alongHi, acrossLo, acrossHi,
+    minPieceAsked: minPiece,
+    slimCount, slimRows,
+    narrowestPieceMm: narrowestPiece === Infinity ? null : narrowestPiece,
+    narrowestRowMm: narrowestRow === Infinity ? null : narrowestRow,
     minStaggerAsked: minStag,
     minStaggerHAsked: minH,
     // Null when there are not enough rows to have a pair that far apart.
@@ -3875,10 +3907,15 @@ function bestFloorPattern(f){
           const trial = {...f, horiz, stagger,
                          ox: horiz ? a : c, oy: horiz ? c : a};
           const t = floorTotals(trial);
-          const key = [t.planksUsed, t.offcutMm2];
-          if(!best || key[0] < best.key[0] || (key[0] === best.key[0] && key[1] < best.key[1])){
+          // Clearing the thin pieces comes before saving planks. That is what
+          // setting out a floor is for, and measured over eight rooms every one
+          // has a layout with none at all, costing at most two planks to reach.
+          const key = [t.slimCount, t.planksUsed, t.offcutMm2];
+          const better = !best || key.some((v,i) =>
+            v < best.key[i] && key.slice(0,i).every((u,j) => u === best.key[j]));
+          if(better){
             best = {key, horiz, stagger, ox:trial.ox, oy:trial.oy,
-                    planksUsed:t.planksUsed, boxes:t.boxes};
+                    planksUsed:t.planksUsed, boxes:t.boxes, slimCount:t.slimCount};
           }
         }
       }
@@ -5301,6 +5338,17 @@ function floorFields(f){
       fNum('Expansion gap (mm)', f.gap, v => { f.gap = Math.max(0,v); }),
       fNum('Shortest usable offcut (mm)', f.minUse, v => { f.minUse = Math.max(0,v); }),
     ]),
+    fNum('Warn below this cut (mm)', f.minPiece, v => { f.minPiece = Math.max(0,v); }),
+    t.slimCount
+      ? el('div', {cls:'hint', style:'color:#D9534F;',
+          text:`${t.slimCount} piece${t.slimCount === 1 ? '' : 's'} at a wall `
+            + `${t.slimCount === 1 ? 'is' : 'are'} under ${Math.round(f.minPiece)}mm`
+            + (t.slimRows ? `, including ${t.slimRows} whole row${t.slimRows === 1 ? '' : 's'} ripped down thin` : '')
+            + `. Shown in red on the plan. Not always avoidable, but shifting the pattern `
+            + `or turning the planks usually clears it.`})
+      : el('div', {cls:'hint', text:`No cut at a wall is under ${Math.round(f.minPiece)}mm`
+          + (t.narrowestPieceMm === null ? '.' : ` — the narrowest is ${Math.round(t.narrowestPieceMm)}mm`)
+          + (t.narrowestRowMm === null ? '' : `, and the thinnest row is ${Math.round(t.narrowestRowMm)}mm`) + '.'}),
     el('div', {cls:'row'}, [
       fNum('Stagger, next row (mm)', f.minStagger, v => { f.minStagger = Math.max(0,v); }),
       fNum('Clearance, two rows up (mm)', f.minStaggerH, v => { f.minStaggerH = Math.max(0,v); }),
@@ -5333,7 +5381,9 @@ function floorFields(f){
       f.horiz = b.horiz; f.stagger = b.stagger; f.ox = b.ox; f.oy = b.oy;
       redo();
       status(`Best of the patterns tried: planks ${b.horiz ? 'left to right' : 'up and down'}, `
-        + `${STAGGER_LABELS[b.stagger].toLowerCase()} — ${b.planksUsed} planks, ${b.boxes} box(es)`);
+        + `${STAGGER_LABELS[b.stagger].toLowerCase()} — ${b.planksUsed} planks, ${b.boxes} box(es)`
+        + (b.slimCount ? `, ${b.slimCount} thin cut(s) left — none of the layouts tried avoided them`
+                       : `, no thin cuts at a wall`));
     }, 'primary'),
     btn(f.underUnits ? 'Running under the units — click to stop at them'
                      : 'Stops at the units — click to run underneath',
@@ -5942,6 +5992,9 @@ function refreshSchedule(){
         ? 'only one row' : fmtD(fl.minStaggerGot) + ` (rule: ${fmtD(fl.minStaggerAsked)})`],
       ['Closest joint, two rows up', fl.minStaggerHGot === null
         ? 'under three rows' : fmtD(fl.minStaggerHGot) + ` (rule: ${fmtD(fl.minStaggerHAsked)})`],
+      ['Narrowest cut at a wall', fl.narrowestPieceMm === null
+        ? 'no cut pieces' : fmtD(fl.narrowestPieceMm) + ` (warn under ${fmtD(fl.minPieceAsked)})`],
+      ['Thinnest row', fl.narrowestRowMm === null ? '—' : fmtD(fl.narrowestRowMm)],
       ['Plank area laid', fmtArea(fl.netMm2)],
       ['Planks used', `${fl.planksUsed} (${fl.cuts} cut)`],
       ['Offcut', fmtArea(fl.offcutMm2)],
@@ -5950,6 +6003,13 @@ function refreshSchedule(){
       ['Boxes to order', String(fl.boxes)],
       ['Covering in those boxes', fmtArea(fl.coverageMm2)],
     ]));
+    if(fl.slimCount){
+      body.append(el('div', {cls:'hint', style:'color:#D9534F;',
+        text:`${fl.slimCount} piece${fl.slimCount === 1 ? '' : 's'} at a wall under `
+          + `${fmtD(fl.minPieceAsked)}`
+          + (fl.slimRows ? `, including ${fl.slimRows} row${fl.slimRows === 1 ? '' : 's'} ripped thin` : '')
+          + ' — marked red on the plan. Worth re-setting out if it can be avoided.'}));
+    }
     body.append(el('div', {cls:'hint', text: f.underUnits
       ? 'Laid under the kitchen units, so the whole floor is covered.'
       : 'Cut around walls, splays, floor-standing units and boxing — the covering '
@@ -6286,12 +6346,17 @@ function planPage(denom){
   if(floor && floor.show){
     const lay = layFloor(floor);
     const {pt} = floorAxes(floor);
-    g.ink(shade(hexRgb(FLOOR_COLOR), 0.15)).lw(0.35);
-    for(const row of lay.rows){
-      for(const p of row.planks){
-        const a = pt(p.a0, row.cLo), b = pt(p.a1, row.cHi);
-        const x1 = Math.min(a.x,b.x), y1 = Math.min(a.y,b.y);
-        g.re(X(x1), Y(Math.max(a.y,b.y)), Math.abs(b.x-a.x)*k, Math.abs(b.y-a.y)*k).S();
+    // Thin pieces last and in red, so the warning survives onto the printed plan.
+    for(const slim of [false, true]){
+      if(slim) g.ink([0.85,0.33,0.31]).lw(0.9);
+      else g.ink(shade(hexRgb(FLOOR_COLOR), 0.15)).lw(0.35);
+      for(const row of lay.rows){
+        for(const p of row.planks){
+          if(!!p.slim !== slim) continue;
+          const a = pt(p.a0, row.cLo), b = pt(p.a1, row.cHi);
+          const x1 = Math.min(a.x,b.x);
+          g.re(X(x1), Y(Math.max(a.y,b.y)), Math.abs(b.x-a.x)*k, Math.abs(b.y-a.y)*k).S();
+        }
       }
     }
   }
@@ -6760,6 +6825,10 @@ function schedulePage(){
       ? 'only one row' : fmtD(fl.minStaggerGot) + ` (rule: ${fmtD(fl.minStaggerAsked)})`);
     row('Closest joint, two rows up', fl.minStaggerHGot === null
       ? 'under three rows' : fmtD(fl.minStaggerHGot) + ` (rule: ${fmtD(fl.minStaggerHAsked)})`);
+    row('Narrowest cut at a wall', fl.narrowestPieceMm === null
+      ? 'no cut pieces' : fmtD(fl.narrowestPieceMm) + ` (warn under ${fmtD(fl.minPieceAsked)})`);
+    row('Thinnest row', fl.narrowestRowMm === null ? '-' : fmtD(fl.narrowestRowMm));
+    if(fl.slimCount) row('Pieces under the warning', String(fl.slimCount) + ' - marked red on the plan');
     row('Plank area laid', fmtArea(fl.netMm2));
     row('Planks used', `${fl.planksUsed} (${fl.cuts} cut)`);
     row(`Plus ${Math.round(floor.waste)}% waste`, `${fl.planksWithWaste} planks`);
